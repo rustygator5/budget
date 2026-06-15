@@ -45,6 +45,10 @@
   td.c,th.c{text-align:center}
   tr.weekend td{background:rgba(148,163,184,.06)}
   tr.dayfirst td{border-top:2px solid var(--line)}
+  tr.today td{background:rgba(56,189,248,.14);font-weight:700;color:#fff}
+  tr.today td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
+  .todaybadge{background:var(--accent);color:#04293f;font-size:9px;font-weight:800;
+    padding:1px 6px;border-radius:10px;margin-left:5px;letter-spacing:.5px;vertical-align:middle}
   .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.income{background:rgba(52,211,153,.15);color:var(--income)}
   .pill.expense{background:rgba(248,113,113,.15);color:var(--expense)}
@@ -256,7 +260,7 @@ const MONTHS=['January','February','March','April','May','June','July','August',
 
 let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[]};
 let cur={y:0,m:0}; // current viewed month
-let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null;
+let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
 // ---- local cache (per budget id) ----
 function lsKey(){return KEY+':'+budgetId;}
@@ -358,6 +362,9 @@ function render(){
   const recon=(state.recon&&state.recon[k])||{};
   const start=Number(state.startBal[k]??0);
   $('#startBal').value=state.startBal[k]??'';
+  const today=new Date();
+  const isCurMonth=cur.y===today.getFullYear()&&cur.m===today.getMonth();
+  const todayD=today.getDate();
 
   // build per-day map
   const byDay={};
@@ -400,8 +407,9 @@ function render(){
       if(reconed){const target=Number(rc)||0; adj=target-aBal; aBal=target;}
       const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
       const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
-      html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''}">
-        <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d:''}</td>
+      const isToday=isCurMonth&&d===todayD;
+      html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}">
+        <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d+(isToday?' <span class="todaybadge">TODAY</span>':''):''}</td>
         <td class="c" style="color:var(--muted)">${first?dow:''}</td>
         <td class="l">${it?it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
         <td class="c">${typeCell}</td>
@@ -425,6 +433,8 @@ function render(){
     <td colspan="2" style="text-align:center;font-weight:700" class="${diff>=0?'pos':'neg'}">${diffStr}</td>
     <td></td></tr>`;
   $('#rows').innerHTML=html;
+  const monthChanged=lastRenderedKey!==k; lastRenderedKey=k;
+  if(isCurMonth && monthChanged) setTimeout(scrollToToday,120);
 
   // cards
   const pNet=pIn-pOut, pEnd=start+pNet, aEnd=aBal, vari=aEnd-pEnd;
@@ -627,13 +637,17 @@ document.querySelectorAll('.modal-bg').forEach(m=>m.onclick=e=>{if(e.target===m)
 
 function toast(msg){const t=$('#toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',2200);}
 
+function scrollToToday(){
+  const el=document.querySelector('#rows tr.today');
+  if(el && $('#budgetView').style.display!=='none') el.scrollIntoView({block:'center'});
+}
 // ---- debts tab ----
 function setTab(t){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   $('#budgetView').style.display=t==='budget'?'':'none';
   $('#debtsView').style.display=t==='debts'?'':'none';
   $('#manageBtn').style.display=t==='budget'?'':'none';
-  if(t==='debts')renderDebts();
+  if(t==='debts')renderDebts(); else setTimeout(scrollToToday,60);
 }
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
@@ -715,6 +729,9 @@ $('#addDebt').onclick=()=>{
   }
   render();
   startSync();
+  // reliably land on today once layout has settled (and again after full load)
+  setTimeout(scrollToToday,250);
+  window.addEventListener('load',()=>setTimeout(scrollToToday,120),{once:true});
 })();
 </script>
 </body>
