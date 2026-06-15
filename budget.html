@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monthly Budget</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --line:#334155;
+    --txt:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8;
+    --income:#34d399; --expense:#f87171; --warn:#fbbf24;
+    --good:#34d399; --bad:#f87171;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px}
+  header{background:linear-gradient(90deg,#1e3a5f,#0f172a);padding:14px 18px;
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+  h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.3px}
+  .monthnav{display:flex;align-items:center;gap:10px;margin-left:8px}
+  .monthnav button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    width:34px;height:34px;border-radius:8px;font-size:18px;cursor:pointer}
+  .monthnav button:hover{border-color:var(--accent)}
+  .monthlabel{min-width:150px;text-align:center;font-weight:600;font-size:15px}
+  .spacer{flex:1}
+  .btn{background:var(--accent);color:#04293f;border:none;padding:9px 14px;border-radius:8px;
+    font-weight:600;cursor:pointer;font-size:13px}
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
+  .wrap{padding:18px;max-width:1100px;margin:0 auto}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .card .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  .card .val{font-size:20px;font-weight:700;margin-top:4px}
+  .startbal{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .startbal label{color:var(--muted)}
+  input.money{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:7px 9px;border-radius:7px;width:120px;font-size:14px;text-align:right}
+  input.money:focus{outline:none;border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden}
+  th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:var(--panel2);color:var(--muted);font-size:11px;text-transform:uppercase;
+    letter-spacing:.5px;position:sticky;top:0}
+  td.l,th.l{text-align:left}
+  td.c,th.c{text-align:center}
+  tr.weekend td{background:rgba(148,163,184,.06)}
+  tr.dayfirst td{border-top:2px solid var(--line)}
+  .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+  .pill.income{background:rgba(52,211,153,.15);color:var(--income)}
+  .pill.expense{background:rgba(248,113,113,.15);color:var(--expense)}
+  .amt-in{color:var(--income)}
+  .amt-out{color:var(--expense)}
+  input.actual{background:transparent;border:1px solid transparent;color:var(--txt);
+    width:90px;text-align:right;padding:4px 6px;border-radius:6px;font-size:13px}
+  input.actual:hover{border-color:var(--line)}
+  input.actual:focus{outline:none;border-color:var(--accent);background:var(--panel2)}
+  .bal{font-weight:700}
+  .pos{color:var(--good)} .neg{color:var(--bad)}
+  .del{color:var(--muted);cursor:pointer;border:none;background:none;font-size:14px}
+  .del:hover{color:var(--bad)}
+  .empty{color:var(--muted);font-style:italic;font-size:12px}
+  /* modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;
+    justify-content:center;z-index:50}
+  .modal-bg.show{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:560px;
+    max-width:94vw;max-height:88vh;overflow:auto;padding:20px}
+  .modal h2{margin:0 0 14px;font-size:16px}
+  .formrow{display:grid;grid-template-columns:1.4fr .8fr .9fr .7fr auto;gap:8px;align-items:end;margin-bottom:14px}
+  .formrow .f label{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}
+  .formrow input,.formrow select{width:100%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--txt);padding:7px;border-radius:7px;font-size:13px}
+  .itemlist{margin-top:8px}
+  .itemlist .it{display:grid;grid-template-columns:1fr auto auto auto auto;gap:8px;align-items:center;
+    padding:8px;border-bottom:1px solid var(--line)}
+  .itemlist .it .nm{font-weight:600}
+  .tag{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+  .sect{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 4px}
+  .close{float:right;cursor:pointer;color:var(--muted);font-size:20px;border:none;background:none}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px;line-height:1.5}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);
+    border:1px solid var(--accent);padding:10px 18px;border-radius:10px;display:none;z-index:80}
+  @media(max-width:680px){.formrow{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>💰 Monthly Budget</h1>
+  <div class="monthnav">
+    <button id="prevM">‹</button>
+    <div class="monthlabel" id="monthLabel">—</div>
+    <button id="nextM">›</button>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn" id="manageBtn">＋ Manage items</button>
+  <button class="btn ghost" id="shareBtn">🔗 Share</button>
+  <button class="btn ghost" id="ioBtn">⇅ Backup</button>
+  <span id="syncStatus" title="Sync status" style="font-size:18px;color:#94a3b8;cursor:default">●</span>
+</header>
+
+<div class="wrap">
+  <div class="startbal">
+    <label>Starting bank balance for this month:</label>
+    <input class="money" id="startBal" type="number" step="0.01">
+    <button class="btn ghost" id="carryBtn" title="Use last month's ending actual balance">↩ Carry from last month</button>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <table id="tbl">
+    <thead><tr>
+      <th class="l">Date</th><th class="c">Day</th><th class="l">Item</th>
+      <th class="c">Type</th><th>Planned</th><th>Actual</th>
+      <th>Planned Balance</th><th>Actual Balance</th><th></th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="hint">Tip: <b>Actual</b> is editable — type what really hit the bank as the month goes; leave blank for things that haven't happened yet. The <b>Actual Balance</b> only moves on rows where you've entered an actual. Recurring items repeat every month automatically.</div>
+</div>
+
+<!-- Manage modal -->
+<div class="modal-bg" id="manageModal">
+  <div class="modal">
+    <button class="close" data-close>×</button>
+    <h2>Manage items</h2>
+    <div class="formrow">
+      <div class="f"><label>Name</label><input id="fName" placeholder="e.g. Rent"></div>
+      <div class="f"><label>Amount</label><input id="fAmt" type="number" step="0.01" placeholder="0.00"></div>
+      <div class="f"><label>Type</label><select id="fType"><option value="income">Income</option><option value="expense">Expense</option></select></div>
+      <div class="f"><label>Frequency</label><select id="fFreq">
+        <option value="monthly">Monthly</option>
+        <option value="biweekly">Bi-weekly</option>
+        <option value="weekly">Weekly</option>
+        <option value="oneoff">One-time</option></select></div>
+      <div class="f"><button class="btn" id="addItem">Add</button></div>
+    </div>
+    <div id="freqField" style="margin-bottom:6px"></div>
+    <div id="recurNote" style="color:var(--muted);font-size:11px;margin-bottom:6px"></div>
+    <div class="sect">Recurring (every month)</div>
+    <div class="itemlist" id="recurList"></div>
+    <div class="sect">This month only</div>
+    <div class="itemlist" id="oneoffList"></div>
+  </div>
+</div>
+
+<!-- IO modal -->
+<div class="modal-bg" id="ioModal">
+  <div class="modal">
+    <button class="close" data-close>×</button>
+    <h2>Backup &amp; Restore</h2>
+    <p class="hint">Copy this to save a backup, or paste a backup and click Restore. This is all your data (every month).</p>
+    <textarea id="ioText" style="width:100%;height:200px;background:var(--panel2);color:var(--txt);
+      border:1px solid var(--line);border-radius:8px;padding:10px;font-family:monospace;font-size:12px"></textarea>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn" id="copyBtn">Copy</button>
+      <button class="btn ghost" id="restoreBtn">Restore from text</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY='budgetApp.v1';
+// ─── SUPABASE (shared live sync) ───
+const SUPA_URL='https://xuipllbtrsebavtffjdy.supabase.co';
+const SUPA_KEY='sb_publishable_4Uc4-PMVI4Bsodk6FYYEjg_h2o5xZ0j';
+const SHEAD={'apikey':SUPA_KEY,'Content-Type':'application/json'};
+const $=s=>document.querySelector(s);
+const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}};
+let cur={y:0,m:0}; // current viewed month
+let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null;
+
+// ---- local cache (per budget id) ----
+function lsKey(){return KEY+':'+budgetId;}
+function loadLocal(){try{const s=JSON.parse(localStorage.getItem(lsKey()));if(s&&s.__budget)return s;}catch(e){}return null;}
+function saveLocal(){localStorage.setItem(lsKey(),JSON.stringify(state));}
+function save(){saveLocal();scheduleCloudPush();}
+
+function newId(){return 'b_'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);}
+function resolveBudgetId(){
+  const m=location.hash.match(/b=([\w-]+)/);
+  if(m){budgetId=m[1];return;}                      // opened a shared link
+  budgetId=localStorage.getItem('budgetApp.lastId'); // my own returning budget
+  if(!budgetId){budgetId=newId();freshId=true;}
+  localStorage.setItem('budgetApp.lastId',budgetId);
+  history.replaceState(null,'',location.pathname+location.search+'#b='+budgetId);
+}
+
+// ---- sync status dot ----
+function setStatus(s){
+  const el=$('#syncStatus'); if(!el)return;
+  const map={synced:['#34d399','Synced — shared live'],saving:['#fbbf24','Saving…'],
+    offline:['#f87171','Offline — saved on this device only'],local:['#94a3b8','Local only']};
+  el.style.color=map[s][0]; el.title=map[s][1];
+}
+
+// ---- supabase REST ----
+async function cloudGet(){
+  try{
+    const r=await fetch(SUPA_URL+'/rest/v1/budgets?id=eq.'+encodeURIComponent(budgetId)+'&select=data,updated_at',{headers:SHEAD});
+    if(!r.ok)throw 0; const rows=await r.json(); return rows[0]||null;
+  }catch(e){return undefined;} // undefined = network/error
+}
+async function cloudPush(){
+  setStatus('saving');
+  const ts=new Date().toISOString();
+  try{
+    const r=await fetch(SUPA_URL+'/rest/v1/budgets?on_conflict=id',{
+      method:'POST',headers:{...SHEAD,'Prefer':'resolution=merge-duplicates,return=minimal'},
+      body:JSON.stringify({id:budgetId,data:state,updated_at:ts})});
+    if(!r.ok)throw 0; serverTs=new Date(ts).getTime(); setStatus('synced');
+  }catch(e){setStatus('offline');}
+}
+function scheduleCloudPush(){clearTimeout(pushTimer);pushTimer=setTimeout(cloudPush,700);}
+function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual'))||a.id==='startBal'||(a.closest&&a.closest('.modal-bg.show')));}
+async function cloudPoll(){
+  const row=await cloudGet();
+  if(row===undefined){setStatus('offline');return;}
+  setStatus('synced');
+  if(row && row.data && row.data.__budget){
+    const t=new Date(row.updated_at).getTime();
+    if(t>serverTs && !isEditing()){serverTs=t;state=row.data;saveLocal();render();}
+  }
+}
+async function startSync(){
+  const row=await cloudGet();
+  if(row===undefined){setStatus('offline');}
+  else if(row && row.data && row.data.__budget){
+    state=row.data; serverTs=new Date(row.updated_at).getTime(); saveLocal(); render(); setStatus('synced');
+  }else{ await cloudPush(); } // no row yet — create it
+  clearInterval(pollTimer); pollTimer=setInterval(cloudPoll,7000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)cloudPoll();});
+}
+function mkey(y,m){return y+'-'+String(m+1).padStart(2,'0');}
+function uid(){return Math.random().toString(36).slice(2,9);}
+
+function parseLocal(s){const a=(s||'').split('-').map(Number);return new Date(a[0],a[1]-1,a[2],12);}
+const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function occThisMonth(it,y,m){
+  const N=daysIn(y,m), out=[];
+  const base={id:it.id,name:it.name,type:it.type,amount:it.amount,recurring:true,freq:it.freq||'monthly'};
+  const push=d=>out.push({...base,day:d,key:'r_'+it.id+'_'+d});
+  if(it.freq==='weekly'){
+    for(let d=1;d<=N;d++) if(new Date(y,m,d).getDay()===(+it.weekday)) push(d);
+  }else if(it.freq==='biweekly'){
+    const ms=14*864e5, first=new Date(y,m,1,12).getTime(), last=new Date(y,m,N,12).getTime();
+    let t=parseLocal(it.anchor).getTime();
+    if(isNaN(t)) return out;
+    if(t<first) t+=Math.ceil((first-t)/ms)*ms;
+    while(t<=last){const dt=new Date(t); if(dt.getMonth()===m&&dt.getFullYear()===y) push(dt.getDate()); t+=ms;}
+  }else{
+    push(Math.min(Math.max(1,+it.day||1),N));
+  }
+  return out;
+}
+function itemsForMonth(y,m){
+  const k=mkey(y,m);
+  let rec=[]; state.recurring.forEach(it=>{rec=rec.concat(occThisMonth(it,y,m));});
+  const one=(state.oneoff[k]||[]).map(it=>({...it,key:'o_'+it.id+'_'+(it.day||1),recurring:false,freq:'oneoff'}));
+  return rec.concat(one);
+}
+
+function daysIn(y,m){return new Date(y,m+1,0).getDate();}
+
+function render(){
+  $('#monthLabel').textContent=MONTHS[cur.m]+' '+cur.y;
+  const k=mkey(cur.y,cur.m);
+  const items=itemsForMonth(cur.y,cur.m);
+  const acts=state.actuals[k]||{};
+  const start=Number(state.startBal[k]??0);
+  $('#startBal').value=state.startBal[k]??'';
+
+  // build per-day map
+  const byDay={};
+  items.forEach(it=>{const d=Math.min(Math.max(1,+it.day||1),daysIn(cur.y,cur.m));(byDay[d]=byDay[d]||[]).push(it);});
+
+  let pBal=start,aBal=start,html='',pIn=0,pOut=0,aIn=0,aOut=0;
+  // opening row
+  html+=`<tr><td class="l">${MONTHS[cur.m].slice(0,3)} 1</td><td class="c"></td>
+    <td class="l" style="font-weight:700">Opening balance</td><td></td><td></td><td></td>
+    <td class="bal">${fmt(start)}</td><td class="bal">${fmt(start)}</td><td></td></tr>`;
+
+  const N=daysIn(cur.y,cur.m);
+  for(let d=1;d<=N;d++){
+    const date=new Date(cur.y,cur.m,d);
+    const wknd=date.getDay()===0||date.getDay()===6;
+    const dow=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][date.getDay()];
+    const rows=byDay[d]||[null];
+    rows.forEach((it,idx)=>{
+      const first=idx===0;
+      let planCell='',actCell='',typeCell='';
+      if(it){
+        const amt=Number(it.amount)||0;
+        const isInc=it.type==='income';
+        if(isInc){pIn+=amt;pBal+=amt;}else{pOut+=amt;pBal-=amt;}
+        planCell=`<span class="${isInc?'amt-in':'amt-out'}">${isInc?'+':'−'}${fmt(amt).replace('-','')}</span>`;
+        typeCell=`<span class="pill ${isInc?'income':'expense'}">${isInc?'Income':'Expense'}</span>`;
+        const av=acts[it.key];
+        const hasA=av!==undefined&&av!==''&&av!==null;
+        if(hasA){const a=Number(av)||0; if(isInc){aIn+=a;aBal+=a;}else{aOut+=a;aBal-=a;}}
+        actCell=`<input class="actual" data-key="${it.key}" type="number" step="0.01"
+          placeholder="${amt.toFixed(2)}" value="${hasA?av:''}">`;
+      }else{
+        planCell='<span class="empty">—</span>';
+      }
+      html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''}">
+        <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d:''}</td>
+        <td class="c" style="color:var(--muted)">${first?dow:''}</td>
+        <td class="l">${it?it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
+        <td class="c">${typeCell}</td>
+        <td>${planCell}</td>
+        <td>${actCell}</td>
+        <td class="bal ${pBal<0?'neg':''}">${fmt(pBal)}</td>
+        <td class="bal ${aBal<0?'neg':''}">${fmt(aBal)}</td>
+        <td></td></tr>`;
+    });
+  }
+  $('#rows').innerHTML=html;
+
+  // cards
+  const pNet=pIn-pOut, pEnd=start+pNet, aEnd=aBal, vari=aEnd-pEnd;
+  $('#cards').innerHTML=[
+    ['Planned Income',fmt(pIn),'var(--income)'],
+    ['Planned Expenses',fmt(pOut),'var(--expense)'],
+    ['Planned Net',fmt(pNet),pNet>=0?'var(--good)':'var(--bad)'],
+    ['Planned End Balance',fmt(pEnd),pEnd>=0?'var(--txt)':'var(--bad)'],
+    ['Actual End Balance',fmt(aEnd),aEnd>=0?'var(--txt)':'var(--bad)'],
+    ['Variance (Act − Plan)',fmt(vari),vari>=0?'var(--good)':'var(--bad)'],
+  ].map(c=>`<div class="card"><div class="lbl">${c[0]}</div><div class="val" style="color:${c[2]}">${c[1]}</div></div>`).join('');
+
+  // wire actual inputs
+  document.querySelectorAll('input.actual').forEach(inp=>{
+    inp.onchange=()=>{
+      state.actuals[k]=state.actuals[k]||{};
+      if(inp.value==='')delete state.actuals[k][inp.dataset.key];
+      else state.actuals[k][inp.dataset.key]=inp.value;
+      save();render();
+    };
+  });
+}
+
+// month nav
+$('#prevM').onclick=()=>{cur.m--;if(cur.m<0){cur.m=11;cur.y--;}render();};
+$('#nextM').onclick=()=>{cur.m++;if(cur.m>11){cur.m=0;cur.y++;}render();};
+
+// starting balance
+$('#startBal').onchange=e=>{
+  const k=mkey(cur.y,cur.m);
+  if(e.target.value==='')delete state.startBal[k]; else state.startBal[k]=Number(e.target.value);
+  save();render();
+};
+$('#carryBtn').onclick=()=>{
+  // compute previous month's actual end balance
+  let pm=cur.m-1,py=cur.y; if(pm<0){pm=11;py--;}
+  const pk=mkey(py,pm);
+  const items=itemsForMonth(py,pm), acts=state.actuals[pk]||{};
+  let bal=Number(state.startBal[pk]??0);
+  items.forEach(it=>{const av=acts[it.key];if(av!==undefined&&av!==''){const a=Number(av)||0;bal+=it.type==='income'?a:-a;}});
+  state.startBal[mkey(cur.y,cur.m)]=bal; save();render();
+  toast('Carried '+fmt(bal)+' from '+MONTHS[pm]+' '+py);
+};
+
+// ---- manage modal ----
+function isoToday(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function isoFirst(){return cur.y+'-'+String(cur.m+1).padStart(2,'0')+'-01';}
+function updateFreqField(){
+  const f=$('#fFreq').value; let h='';
+  if(f==='monthly') h=`<label>Day of month</label><input id="fDay" type="number" min="1" max="31" value="1">`;
+  else if(f==='weekly') h=`<label>Day of week</label><select id="fWeekday">${DOW.map((d,i)=>`<option value="${i}">${d}</option>`).join('')}</select>`;
+  else if(f==='biweekly') h=`<label>Start date (first payment)</label><input id="fAnchor" type="date" value="${isoToday()}">`;
+  else h=`<label>Date</label><input id="fDate" type="date" value="${isoFirst()}">`;
+  $('#freqField').innerHTML=`<div class="f" style="max-width:260px"><label>${h.match(/<label>(.*?)<\/label>/)[1]}</label>${h.replace(/<label>.*?<\/label>/,'')}</div>`;
+  const notes={monthly:'Repeats every month on this day.',weekly:'Repeats every week on this weekday.',
+    biweekly:'Repeats every 14 days starting from the chosen date.',oneoff:'A single one-time item on this date.'};
+  $('#recurNote').textContent=notes[f];
+}
+$('#fFreq').onchange=updateFreqField;
+$('#manageBtn').onclick=()=>{updateFreqField();renderItems();$('#manageModal').classList.add('show');};
+$('#addItem').onclick=()=>{
+  const name=$('#fName').value.trim(); const amount=Number($('#fAmt').value)||0;
+  const type=$('#fType').value, freq=$('#fFreq').value;
+  if(!name){toast('Enter a name');return;}
+  const it={id:uid(),name,amount,type,freq};
+  if(freq==='monthly'){it.day=Math.min(Math.max(1,+$('#fDay').value||1),31);state.recurring.push(it);}
+  else if(freq==='weekly'){it.weekday=+$('#fWeekday').value;state.recurring.push(it);}
+  else if(freq==='biweekly'){it.anchor=$('#fAnchor').value||isoToday();state.recurring.push(it);}
+  else{const dt=parseLocal($('#fDate').value||isoFirst());it.day=dt.getDate();delete it.freq;
+    const k=mkey(dt.getFullYear(),dt.getMonth());(state.oneoff[k]=state.oneoff[k]||[]).push(it);}
+  $('#fName').value='';$('#fAmt').value='';updateFreqField();
+  save();renderItems();render();
+};
+function freqLabel(it,recurring){
+  if(!recurring) return ['day '+it.day,'one-off'];
+  if(it.freq==='weekly') return [DOW[+it.weekday]+'s','↻ weekly'];
+  if(it.freq==='biweekly') return ['from '+it.anchor,'↻ bi-weekly'];
+  return ['day '+it.day,'↻ monthly'];
+}
+function renderItems(){
+  const row=(it,recurring)=>{const fl=freqLabel(it,recurring);return `<div class="it">
+    <span class="nm">${it.name}</span>
+    <span class="pill ${it.type==='income'?'income':'expense'}">${it.type==='income'?'+':'−'}${fmt(it.amount).replace('-','')}</span>
+    <span class="tag">${fl[0]}</span>
+    <span class="tag">${fl[1]}</span>
+    <button class="del" data-id="${it.id}" data-r="${recurring?1:0}">🗑</button></div>`;};
+  $('#recurList').innerHTML=state.recurring.length?state.recurring.map(it=>row(it,true)).join(''):'<div class="empty" style="padding:8px">None yet</div>';
+  const k=mkey(cur.y,cur.m); const one=state.oneoff[k]||[];
+  $('#oneoffList').innerHTML=one.length?one.map(it=>row(it,false)).join(''):'<div class="empty" style="padding:8px">None this month</div>';
+  document.querySelectorAll('.del').forEach(b=>b.onclick=()=>{
+    const id=b.dataset.id;
+    if(b.dataset.r==='1')state.recurring=state.recurring.filter(x=>x.id!==id);
+    else state.oneoff[k]=(state.oneoff[k]||[]).filter(x=>x.id!==id);
+    save();renderItems();render();
+  });
+}
+
+// ---- share (live link — everyone edits the same budget) ----
+$('#shareBtn').onclick=()=>{
+  const url=location.origin+location.pathname+'#b='+budgetId;
+  navigator.clipboard.writeText(url).then(()=>toast('Live link copied! Anyone who opens it sees & edits this budget.'),
+    ()=>{$('#ioText').value=url;$('#ioModal').classList.add('show');});
+};
+
+// ---- backup/restore ----
+$('#ioBtn').onclick=()=>{$('#ioText').value=JSON.stringify(state,null,2);$('#ioModal').classList.add('show');};
+$('#copyBtn').onclick=()=>{navigator.clipboard.writeText($('#ioText').value).then(()=>toast('Copied'));};
+$('#restoreBtn').onclick=()=>{
+  try{const d=JSON.parse($('#ioText').value);if(!d.__budget)throw 0;state=d;save();render();$('#ioModal').classList.remove('show');toast('Restored');}
+  catch(e){toast('Invalid backup text');}
+};
+
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=e=>e.target.closest('.modal-bg').classList.remove('show'));
+document.querySelectorAll('.modal-bg').forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove('show');});
+
+function toast(msg){const t=$('#toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',2200);}
+
+// init
+(function(){
+  resolveBudgetId();
+  const local=loadLocal(); if(local) state=local;
+  const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
+  // seed examples only for a brand-new budget (not when opening someone's shared link)
+  if(freshId && !local){
+    state.recurring=[
+      {id:uid(),name:'Paycheck',amount:2000,type:'income',freq:'biweekly',anchor:'2026-06-05'},
+      {id:uid(),name:'Rent',amount:1500,type:'expense',freq:'monthly',day:1},
+      {id:uid(),name:'Car Payment',amount:400,type:'expense',freq:'monthly',day:5},
+      {id:uid(),name:'Electric',amount:120,type:'expense',freq:'monthly',day:10},
+      {id:uid(),name:'Internet',amount:80,type:'expense',freq:'monthly',day:20},
+      {id:uid(),name:'Groceries',amount:150,type:'expense',freq:'biweekly',anchor:'2026-06-06'},
+      {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
+    ];
+    saveLocal();
+  }
+  render();
+  startSync();
+})();
+</script>
+</body>
+</html>
