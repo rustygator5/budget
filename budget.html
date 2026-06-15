@@ -57,6 +57,13 @@
   input.actual.edited{color:var(--warn);font-weight:700;border-color:rgba(251,191,36,.5)}
   .bal{font-weight:700}
   .pos{color:var(--good)} .neg{color:var(--bad)}
+  .balcell{cursor:pointer}
+  .balcell:hover{outline:1px dashed var(--accent);outline-offset:-1px}
+  .balcell.reconciled{color:var(--warn)}
+  .adjnote{font-size:10px;font-weight:400;color:var(--muted);margin-top:1px}
+  input.balinput{background:var(--panel2);border:1px solid var(--accent);color:var(--txt);
+    width:100px;text-align:right;padding:4px 6px;border-radius:6px;font-size:13px;font-weight:700}
+  input.balinput:focus{outline:none}
   .del{color:var(--muted);cursor:pointer;border:none;background:none;font-size:14px}
   .del:hover{color:var(--bad)}
   .empty{color:var(--muted);font-style:italic;font-size:12px}
@@ -124,7 +131,7 @@
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="hint">Tip: <b>Actual</b> starts equal to Planned. As the month goes, edit any Actual to what really happened (or add a new item) and every balance below it re-adjusts. Edited actuals are highlighted. Clear a cell to snap it back to the planned amount. Recurring items repeat every month automatically.</div>
+  <div class="hint">Tip: <b>Actual</b> starts equal to Planned — edit any Actual to what really happened and every balance below re-adjusts. Or <b>click an Actual Balance</b> to reconcile: type your real bank balance on that day and the app inserts a balancing adjustment so totals match. Clear a cell to undo. Recurring items repeat every month automatically.</div>
 </div>
 
 <!-- Manage modal -->
@@ -179,7 +186,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}};
 let cur={y:0,m:0}; // current viewed month
 let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null;
 
@@ -280,6 +287,7 @@ function render(){
   const k=mkey(cur.y,cur.m);
   const items=itemsForMonth(cur.y,cur.m);
   const acts=state.actuals[k]||{};
+  const recon=(state.recon&&state.recon[k])||{};
   const start=Number(state.startBal[k]??0);
   $('#startBal').value=state.startBal[k]??'';
 
@@ -317,6 +325,13 @@ function render(){
       }else{
         planCell='<span class="empty">—</span>';
       }
+      // day-level reconciliation: a typed real balance overrides the running actual
+      const rk=it?it.key:('d'+d);
+      const rc=recon[rk]; const reconed=rc!==undefined&&rc!=='';
+      let adj=0;
+      if(reconed){const target=Number(rc)||0; adj=target-aBal; aBal=target;}
+      const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
       html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''}">
         <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d:''}</td>
         <td class="c" style="color:var(--muted)">${first?dow:''}</td>
@@ -325,7 +340,7 @@ function render(){
         <td>${planCell}</td>
         <td>${actCell}</td>
         <td class="bal ${pBal<0?'neg':''}">${fmt(pBal)}</td>
-        <td class="bal ${aBal<0?'neg':''}">${fmt(aBal)}</td>
+        <td class="bal balcell ${aBal<0?'neg':''} ${reconed?'reconciled':''}" data-rk="${rk}" data-val="${aBal}" title="Click to set your real bank balance on this day">${fmt(aBal)}${adjNote}</td>
         <td></td></tr>`;
     });
   }
@@ -351,6 +366,20 @@ function render(){
       save();render();
     };
   });
+  // click an Actual Balance cell to reconcile to your real bank balance
+  $('#rows').onclick=e=>{
+    const cell=e.target.closest('.balcell'); if(!cell||cell.querySelector('input'))return;
+    const rk=cell.dataset.rk, val=cell.dataset.val;
+    cell.innerHTML=`<input class="balinput" type="number" step="0.01" value="${val}">`;
+    const inp=cell.querySelector('input'); inp.focus(); inp.select();
+    const commit=()=>{
+      state.recon=state.recon||{}; state.recon[k]=state.recon[k]||{};
+      if(inp.value==='') delete state.recon[k][rk]; else state.recon[k][rk]=inp.value;
+      save(); render();
+    };
+    inp.onblur=commit;
+    inp.onkeydown=ev=>{if(ev.key==='Enter'){inp.blur();}else if(ev.key==='Escape'){inp.onblur=null;render();}};
+  };
 }
 
 // month nav
@@ -363,13 +392,23 @@ $('#startBal').onchange=e=>{
   if(e.target.value==='')delete state.startBal[k]; else state.startBal[k]=Number(e.target.value);
   save();render();
 };
+function computeActualEnd(y,m){
+  const k=mkey(y,m), items=itemsForMonth(y,m);
+  const acts=state.actuals[k]||{}, recon=(state.recon&&state.recon[k])||{};
+  const byDay={}; items.forEach(it=>{const d=Math.min(Math.max(1,+it.day||1),daysIn(y,m));(byDay[d]=byDay[d]||[]).push(it);});
+  let aBal=Number(state.startBal[k]??0), N=daysIn(y,m);
+  for(let d=1;d<=N;d++){
+    (byDay[d]||[null]).forEach(it=>{
+      if(it){const amt=Number(it.amount)||0;const av=acts[it.key];const has=av!==undefined&&av!=='';const eff=has?(Number(av)||0):amt;aBal+=it.type==='income'?eff:-eff;}
+      const rk=it?it.key:('d'+d), rc=recon[rk];
+      if(rc!==undefined&&rc!=='') aBal=Number(rc)||0;
+    });
+  }
+  return aBal;
+}
 $('#carryBtn').onclick=()=>{
-  // compute previous month's actual end balance
   let pm=cur.m-1,py=cur.y; if(pm<0){pm=11;py--;}
-  const pk=mkey(py,pm);
-  const items=itemsForMonth(py,pm), acts=state.actuals[pk]||{};
-  let bal=Number(state.startBal[pk]??0);
-  items.forEach(it=>{const av=acts[it.key];if(av!==undefined&&av!==''){const a=Number(av)||0;bal+=it.type==='income'?a:-a;}});
+  const bal=computeActualEnd(py,pm);
   state.startBal[mkey(cur.y,cur.m)]=bal; save();render();
   toast('Carried '+fmt(bal)+' from '+MONTHS[pm]+' '+py);
 };
