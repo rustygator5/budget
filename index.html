@@ -214,7 +214,7 @@
           <tbody id="debtRows"></tbody>
         </table>
         <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-        <div class="hint">Months til paid off = current balance ÷ monthly payment (rounded up; interest not included). Update each <b>Current Balance</b> as you pay it down — the thermometer fills toward zero debt.</div>
+        <div class="hint">Months til paid off = current balance ÷ monthly payment (rounded up; interest not included). Update each <b>Current Balance</b> as you pay it down — the thermometer fills toward zero debt. Click a column header to sort, or drag the ⠿ handle to reorder.</div>
       </div>
       <div class="thermo-wrap">
         <div class="thermo-title">Debt-free progress</div>
@@ -727,6 +727,41 @@ function setupDnD(){
   });
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));dragInfo=null;});
 }
+
+// ---- drag to reorder debts ----
+let debtDrag=null;
+function reorderDebts(draggedId,targetId){
+  if(draggedId===targetId)return;
+  const order=[...document.querySelectorAll('#debtRows tr[data-id]')].map(tr=>tr.dataset.id);
+  const from=order.indexOf(draggedId); if(from<0)return;
+  order.splice(from,1);
+  const to=order.indexOf(targetId); if(to<0)return;
+  order.splice(to,0,draggedId);
+  state.debts=order.map(id=>state.debts.find(d=>d.id===id)).filter(Boolean);
+  debtSort={col:'',dir:1}; // dragging defines the manual order
+  save(); renderDebts();
+}
+function setupDebtDnD(){
+  const rows=$('#debtRows');
+  rows.addEventListener('dragstart',e=>{
+    const h=e.target.closest('.draghandle'); if(!h)return;
+    const tr=h.closest('tr[data-id]'); if(!tr)return;
+    debtDrag=tr.dataset.id; e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',debtDrag);}catch(_){}
+    tr.classList.add('dragging');
+  });
+  rows.addEventListener('dragover',e=>{
+    if(!debtDrag)return; const tr=e.target.closest('tr[data-id]'); if(!tr)return;
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    if(!tr.classList.contains('drop-target')){rows.querySelectorAll('tr.drop-target').forEach(x=>x.classList.remove('drop-target')); tr.classList.add('drop-target');}
+  });
+  rows.addEventListener('drop',e=>{
+    e.preventDefault(); const tr=e.target.closest('tr[data-id]');
+    rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));
+    if(debtDrag&&tr) reorderDebts(debtDrag,tr.dataset.id);
+    debtDrag=null;
+  });
+  rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));debtDrag=null;});
+}
 // ---- debts tab ----
 function setTab(t){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
@@ -763,12 +798,12 @@ function renderDebts(){
     const body=disp.map(d=>{
       const ml=monthsLeft(d); const mlTxt=ml===Infinity?'∞':(ml+(ml===1?' mo':' mos'));
       const p=pctPaid(d);
-      return `<tr>
+      return `<tr data-id="${d.id}">
         <td class="l"><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></td>
         ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td style="font-weight:700;${ml===Infinity?'color:var(--bad)':''}">${mlTxt}</td>
-        <td><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
+        <td class="c" style="white-space:nowrap"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span> <button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
     const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
@@ -840,6 +875,7 @@ $('#addDebt').onclick=()=>{
   }
   render();
   setupDnD();
+  setupDebtDnD();
   startSync();
   // reliably land on today once layout has settled (and again after full load)
   setTimeout(scrollToToday,250);
