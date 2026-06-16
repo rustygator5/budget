@@ -133,10 +133,22 @@
   #debtTbl th.sortable{cursor:pointer;user-select:none}
   #debtTbl th.sortable:hover{color:var(--txt)}
   #debtTbl .si{color:var(--accent)}
-  .moneycell{cursor:pointer}
-  .moneycell:hover{outline:1px dashed var(--accent);outline-offset:-1px}
+  .editcell{cursor:pointer}
+  .editcell:hover{outline:1px dashed var(--accent);outline-offset:-1px}
   input.moneyinput{background:var(--panel2);border:1px solid var(--accent);color:var(--txt);
     width:110px;text-align:right;padding:5px 7px;border-radius:6px;font-size:13px}
+  #debtTbl input.promo{background:var(--panel2);border:1px solid transparent;color:var(--txt);
+    padding:5px;border-radius:6px;font-size:12px;width:140px}
+  #debtTbl input.promo:hover{border-color:var(--line)}
+  #debtTbl td.promo-soon input.promo{border-color:var(--warn);color:var(--warn)}
+  #debtTbl td.promo-past input.promo{border-color:var(--bad);color:var(--bad)}
+  #debtTbl select.prio{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:5px 8px;border-radius:6px;font-size:13px;font-weight:700}
+  select.prio-high{color:var(--expense);border-color:rgba(248,113,113,.6)!important}
+  select.prio-medium{color:var(--warn)}
+  select.prio-low{color:var(--muted)}
+  .debts-main{overflow-x:auto}
+  #debtTbl{min-width:860px}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
   .pctfill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
@@ -209,14 +221,17 @@
             <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
             <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
             <th class="sortable" data-sort="monthly">Monthly Payment<span class="si"></span></th>
+            <th class="sortable" data-sort="apr">Interest Rate<span class="si"></span></th>
+            <th class="sortable" data-sort="promoEnd">Promo End<span class="si"></span></th>
             <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
             <th class="sortable" data-sort="months">Months Til Paid Off<span class="si"></span></th>
+            <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
             <th></th>
           </tr></thead>
           <tbody id="debtRows"></tbody>
         </table>
         <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-        <div class="hint">Months til paid off = current balance ÷ monthly payment (rounded up; interest not included). Update each <b>Current Balance</b> as you pay it down — the thermometer fills toward zero debt. Click a column header to sort, or drag the ⠿ handle to reorder.</div>
+        <div class="hint">Months til paid off accounts for the <b>interest rate</b> and any <b>0% promo</b> window (interest-free until the promo end date). Update each <b>Current Balance</b> as you pay it down — the thermometer fills toward zero debt. Click a column header to sort, or drag the ⠿ handle to reorder.</div>
       </div>
       <div class="thermo-wrap">
         <div class="thermo-title">Debt-free progress</div>
@@ -774,37 +789,62 @@ function setTab(t){
 }
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
-function monthsLeft(d){const c=Number(d.current)||0,p=Number(d.monthly)||0; if(c<=0)return 0; if(p<=0)return Infinity; return Math.ceil(c/p);}
+// months to pay off, accounting for APR and any 0% promo window
+function monthsLeft(d){
+  let bal=Number(d.current)||0; const pay=Number(d.monthly)||0;
+  if(bal<=0) return 0;
+  if(pay<=0) return Infinity;
+  const r=(Number(d.apr)||0)/100/12;
+  let promoMonths=0;
+  if(d.promoEnd){const pe=parseLocal(d.promoEnd),now=new Date();
+    promoMonths=Math.max(0,(pe.getFullYear()-now.getFullYear())*12+(pe.getMonth()-now.getMonth()));}
+  promoMonths=Math.min(promoMonths,600);
+  let months=0;
+  for(let i=0;i<promoMonths&&bal>0;i++){bal-=pay;months++;}   // 0% during promo
+  if(bal<=0) return months;
+  if(r<=0) return months+Math.ceil(bal/pay);
+  if(pay<=bal*r) return Infinity;                              // payment can't cover interest
+  return months+Math.ceil(-Math.log(1-r*bal/pay)/Math.log(1+r));
+}
 function pctPaid(d){const s=Number(d.starting)||0,c=Number(d.current)||0; return s>0?Math.max(0,Math.min(100,(s-c)/s*100)):0;}
+const PRIO_W={high:0,medium:1,low:2};
 let debtSort={col:'',dir:1};
 function renderDebts(){
   state.debts=state.debts||[];
-  // sort indicators + header clicks
   document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
     const c=th.dataset.sort;
     th.querySelector('.si').textContent = debtSort.col===c ? (debtSort.dir>0?' ▲':' ▼') : '';
     th.onclick=()=>{ if(debtSort.col===c) debtSort.dir*=-1; else {debtSort.col=c;debtSort.dir=1;} renderDebts(); };
   });
-  // display order (sorted copy; rows reference real objects by id)
   let disp=state.debts.slice();
   if(debtSort.col){
     const key={name:d=>String(d.name||'').toLowerCase(),starting:d=>Number(d.starting)||0,
-      current:d=>Number(d.current)||0,monthly:d=>Number(d.monthly)||0,pct:d=>pctPaid(d),
-      months:d=>{const m=monthsLeft(d);return m===Infinity?1e9:m;}}[debtSort.col];
+      current:d=>Number(d.current)||0,monthly:d=>Number(d.monthly)||0,apr:d=>Number(d.apr)||0,
+      promoEnd:d=>d.promoEnd?parseLocal(d.promoEnd).getTime():Infinity,pct:d=>pctPaid(d),
+      months:d=>{const m=monthsLeft(d);return m===Infinity?1e9:m;},priority:d=>PRIO_W[d.priority||'medium']}[debtSort.col];
     disp.sort((a,b)=>{const ka=key(a),kb=key(b);return (ka<kb?-1:ka>kb?1:0)*debtSort.dir;});
   }
   if(!state.debts.length){
-    $('#debtRows').innerHTML=`<tr><td colspan="7" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
+    $('#debtRows').innerHTML=`<tr><td colspan="10" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
-    const mcell=(d,f)=>`<td class="moneycell" data-id="${d.id}" data-f="${f}" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
+    const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
+    const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
+    const promoCell=d=>{let cls='';if(d.promoEnd){const days=(parseLocal(d.promoEnd)-new Date())/864e5;cls=days<0?'promo-past':(days<60?'promo-soon':'');}
+      return `<td class="${cls}"><input class="promo debtinput" type="date" data-id="${d.id}" value="${d.promoEnd||''}"></td>`;};
+    const prioCell=d=>{const p=d.priority||'medium';
+      return `<td><select class="prio debtinput prio-${p}" data-id="${d.id}">
+        <option value="high"${p==='high'?' selected':''}>High</option>
+        <option value="medium"${p==='medium'?' selected':''}>Medium</option>
+        <option value="low"${p==='low'?' selected':''}>Low</option></select></td>`;};
     const body=disp.map(d=>{
       const ml=monthsLeft(d); const mlTxt=ml===Infinity?'∞':(ml+(ml===1?' mo':' mos'));
       const p=pctPaid(d);
       return `<tr data-id="${d.id}">
         <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></div></td>
-        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}
+        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}${pcell(d,'apr')}${promoCell(d)}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td style="font-weight:700;${ml===Infinity?'color:var(--bad)':''}">${mlTxt}</td>
+        ${prioCell(d)}
         <td class="c"><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
@@ -813,18 +853,24 @@ function renderDebts(){
     const tpct=ts>0?(ts-tc)/ts*100:0;
     const anyInf=state.debts.some(d=>monthsLeft(d)===Infinity);
     const maxMl=state.debts.reduce((a,d)=>{const m=monthsLeft(d);return m===Infinity?a:Math.max(a,m);},0);
-    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tp)}</td><td>${tpct.toFixed(1)}%</td><td>${anyInf?'∞':(maxMl+' mos')}</td><td></td></tr>`;
+    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tp)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${anyInf?'∞':(maxMl+' mos')}</td><td></td><td></td></tr>`;
     $('#debtRows').innerHTML=body+totRow;
   }
-  // wire name inputs
-  document.querySelectorAll('#debtRows input.debtinput').forEach(inp=>{
+  // wire name / promo / priority
+  document.querySelectorAll('#debtRows input.dn').forEach(inp=>{
     inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.name=inp.value;save();renderDebts();}};
   });
-  // delete + money click-to-edit (delegated)
+  document.querySelectorAll('#debtRows input.promo').forEach(inp=>{
+    inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoEnd=inp.value||'';save();renderDebts();}};
+  });
+  document.querySelectorAll('#debtRows select.prio').forEach(sel=>{
+    sel.onchange=()=>{const d=state.debts.find(x=>x.id===sel.dataset.id);if(d){d.priority=sel.value;save();renderDebts();}};
+  });
+  // delete + click-to-edit money/percent cells (delegated)
   $('#debtRows').onclick=e=>{
     const del=e.target.closest('[data-del]');
     if(del){state.debts=state.debts.filter(x=>x.id!==del.dataset.del);save();renderDebts();return;}
-    const cell=e.target.closest('.moneycell'); if(!cell||cell.querySelector('input'))return;
+    const cell=e.target.closest('.editcell'); if(!cell||cell.querySelector('input'))return;
     const id=cell.dataset.id,f=cell.dataset.f,val=cell.dataset.val;
     cell.innerHTML=`<input class="debtinput moneyinput" type="number" step="0.01" value="${val}">`;
     const inp=cell.querySelector('input'); inp.focus(); inp.select();
@@ -847,7 +893,7 @@ function renderDebts(){
 }
 $('#addDebt').onclick=()=>{
   state.debts=state.debts||[];
-  state.debts.push({id:uid(),name:'',starting:'',current:'',monthly:''});
+  state.debts.push({id:uid(),name:'',starting:'',current:'',monthly:'',apr:'',promoEnd:'',priority:'medium'});
   save(); renderDebts();
 };
 
@@ -868,9 +914,9 @@ $('#addDebt').onclick=()=>{
       {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
     ];
     state.debts=[
-      {id:uid(),name:'Credit Card',starting:5000,current:3200,monthly:250},
-      {id:uid(),name:'Car Loan',starting:18000,current:11500,monthly:400},
-      {id:uid(),name:'Student Loan',starting:12000,current:9800,monthly:180},
+      {id:uid(),name:'Credit Card',starting:5000,current:3200,monthly:250,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
+      {id:uid(),name:'Car Loan',starting:18000,current:11500,monthly:400,apr:6.5,promoEnd:'',priority:'medium'},
+      {id:uid(),name:'Student Loan',starting:12000,current:9800,monthly:180,apr:4.5,promoEnd:'',priority:'low'},
     ];
     state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
     saveLocal();
