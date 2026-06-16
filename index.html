@@ -127,6 +127,7 @@
   #debtTbl input.dn{text-align:left;width:100%;min-width:120px}
   .namecell{display:flex;align-items:center;gap:8px}
   .namecell .dn{flex:1;min-width:80px}
+  .namecell .del{flex:none}
   #debtTbl input:hover{border-color:var(--line)}
   #debtTbl input:focus{outline:none;border-color:var(--accent)}
   #debtTbl tr.totalrow td{border-top:2px solid var(--accent);background:var(--panel2);font-weight:700}
@@ -244,7 +245,6 @@
             <th>Pay This Month</th>
             <th>Payoff</th>
             <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
-            <th></th>
           </tr></thead>
           <tbody id="debtRows"></tbody>
         </table>
@@ -881,7 +881,7 @@ function renderDebts(){
   const payoffTxt=d=>{ if((Number(d.current)||0)<=0.005) return 'Paid'; const m=plan.payoff[d.id]; return m?(m+(m===1?' mo':' mos')):'—'; };
   const payNowTxt=d=>{ const v=plan.payNow[d.id]; return v!=null?fmt(v):'—'; };
   if(!state.debts.length){
-    $('#debtRows').innerHTML=`<tr><td colspan="11" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
+    $('#debtRows').innerHTML=`<tr><td colspan="10" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
     const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
@@ -895,13 +895,12 @@ function renderDebts(){
     const body=disp.map(d=>{
       const p=pctPaid(d);
       return `<tr data-id="${d.id}">
-        <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></div></td>
+        <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"><button class="del" data-del="${d.id}" title="Delete debt">🗑</button></div></td>
         ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'min')}${pcell(d,'apr')}${promoCell(d)}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td class="paynow">${payNowTxt(d)}</td>
         <td class="payoff">${payoffTxt(d)}</td>
-        ${prioCell(d)}
-        <td class="c"><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
+        ${prioCell(d)}</tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
     const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
@@ -909,7 +908,7 @@ function renderDebts(){
     const tpct=ts>0?(ts-tc)/ts*100:0;
     const payNowSum=Object.values(plan.payNow).reduce((a,b)=>a+b,0);
     const payoffTot=plan.feasible&&plan.hasDebt?(plan.months+' mos'):(plan.hasDebt?'—':'');
-    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tmin)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${fmt(payNowSum)}</td><td>${payoffTot}</td><td></td><td></td></tr>`;
+    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tmin)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${fmt(payNowSum)}</td><td>${payoffTot}</td><td></td></tr>`;
     $('#debtRows').innerHTML=body+totRow;
   }
   // wire name / promo / priority
