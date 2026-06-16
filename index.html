@@ -116,15 +116,20 @@
   /* debts */
   .debts-layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
   .debts-main{flex:1;min-width:320px}
-  #debtTbl{width:100%;border-collapse:collapse;background:var(--panel);border-radius:12px;overflow:hidden}
-  #debtTbl th{background:var(--panel2);color:var(--muted);font-size:11px;text-transform:uppercase;
-    letter-spacing:.5px;padding:9px 10px;text-align:right}
+  #debtTbl{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);border-radius:12px;overflow:visible}
+  #debtTbl th{background:var(--panel2);color:var(--muted);font-size:10px;text-transform:uppercase;
+    letter-spacing:.3px;padding:7px 7px;text-align:right;white-space:nowrap}
   #debtTbl th.l{text-align:left}
-  #debtTbl td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  #debtTbl td{padding:5px 7px;text-align:right;border-bottom:1px solid var(--line)}
   #debtTbl td.l{text-align:left}
   #debtTbl input{background:var(--panel2);border:1px solid transparent;color:var(--txt);
-    padding:6px 8px;border-radius:6px;font-size:13px;width:110px;text-align:right}
-  #debtTbl input.dn{text-align:left;width:100%;min-width:120px}
+    padding:5px 6px;border-radius:6px;font-size:13px;width:90px;text-align:right}
+  #debtTbl input.dn{text-align:left;width:100%;min-width:80px}
+  /* lock the Debt name column when scrolling horizontally */
+  #debtTbl th:first-child,#debtTbl td:first-child{position:sticky;left:0;z-index:2;box-shadow:1px 0 0 var(--line)}
+  #debtTbl td:first-child{background:var(--panel)}
+  #debtTbl th:first-child{background:var(--panel2);z-index:3}
+  #debtTbl tr.totalrow td:first-child{background:var(--panel2)}
   .namecell{display:flex;align-items:center;gap:8px}
   .namecell .dn{flex:1;min-width:80px}
   .namecell .del{flex:none}
@@ -139,7 +144,7 @@
   input.moneyinput{background:var(--panel2);border:1px solid var(--accent);color:var(--txt);
     width:110px;text-align:right;padding:5px 7px;border-radius:6px;font-size:13px}
   #debtTbl input.promo{background:var(--panel2);border:1px solid transparent;color:var(--txt);
-    padding:5px;border-radius:6px;font-size:12px;width:140px}
+    padding:5px;border-radius:6px;font-size:12px;width:122px}
   #debtTbl input.promo:hover{border-color:var(--line)}
   #debtTbl td.promo-soon input.promo{border-color:var(--warn);color:var(--warn)}
   #debtTbl td.promo-past input.promo{border-color:var(--bad);color:var(--bad)}
@@ -148,8 +153,8 @@
   select.prio-high{color:var(--expense);border-color:rgba(248,113,113,.6)!important}
   select.prio-medium{color:var(--warn)}
   select.prio-low{color:var(--muted)}
-  .debts-main{overflow-x:auto}
-  #debtTbl{min-width:960px}
+  .debts-main{overflow-x:auto;border-radius:12px}
+  #debtTbl{min-width:740px}
   .allowance-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
   .allowance-bar label{color:var(--muted)}
   #allowanceNote{font-size:12px}
@@ -165,12 +170,15 @@
   .debts-lower{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:20px}
   .debts-lower .plan-panel{flex:1;min-width:280px;margin-top:0}
   .sched-wrap{max-height:440px;overflow:auto;margin-top:8px;border:1px solid var(--line);border-radius:8px}
-  #schedTbl{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+  #schedTbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;white-space:nowrap;overflow:visible}
   #schedTbl th,#schedTbl td{padding:5px 10px;text-align:right;border-bottom:1px solid var(--line)}
   #schedTbl th{position:sticky;top:0;background:var(--panel2);color:var(--muted);
     text-transform:uppercase;font-size:10px;letter-spacing:.5px;z-index:1}
   #schedTbl th.l,#schedTbl td.l{text-align:left}
+  #schedTbl th:first-child,#schedTbl td:first-child{position:sticky;left:0;background:var(--panel);z-index:1;box-shadow:1px 0 0 var(--line)}
+  #schedTbl thead th:first-child{background:var(--panel2);z-index:2}
   #schedTbl tr.totalrow td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;border-top:2px solid var(--accent)}
+  #schedTbl tr.totalrow td:first-child{z-index:2}
   .sched-int{color:var(--expense)}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
@@ -245,13 +253,13 @@
       <table id="debtTbl">
         <thead><tr>
           <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
-          <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
-          <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
-          <th class="sortable" data-sort="min">Minimum Payment<span class="si"></span></th>
-          <th class="sortable" data-sort="apr">Interest Rate<span class="si"></span></th>
+          <th class="sortable" data-sort="starting">Starting<span class="si"></span></th>
+          <th class="sortable" data-sort="current">Current<span class="si"></span></th>
+          <th class="sortable" data-sort="min">Min Pmt<span class="si"></span></th>
+          <th class="sortable" data-sort="apr">APR<span class="si"></span></th>
           <th class="sortable" data-sort="promoEnd">Promo End<span class="si"></span></th>
-          <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
-          <th>Pay This Month</th>
+          <th class="sortable" data-sort="pct">% Paid<span class="si"></span></th>
+          <th>Pay Now</th>
           <th>Payoff</th>
           <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
         </tr></thead>
