@@ -162,6 +162,16 @@
   .plan-order{margin:0;padding-left:20px;line-height:1.9}
   .plan-order .pord-when{color:var(--muted);font-size:12px}
   .plan-warn{color:var(--bad);font-weight:600}
+  .debts-lower{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:20px}
+  .debts-lower .plan-panel{flex:1;min-width:280px;margin-top:0}
+  .sched-wrap{max-height:440px;overflow:auto;margin-top:8px;border:1px solid var(--line);border-radius:8px}
+  #schedTbl{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+  #schedTbl th,#schedTbl td{padding:5px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  #schedTbl th{position:sticky;top:0;background:var(--panel2);color:var(--muted);
+    text-transform:uppercase;font-size:10px;letter-spacing:.5px;z-index:1}
+  #schedTbl th.l,#schedTbl td.l{text-align:left}
+  #schedTbl tr.totalrow td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;border-top:2px solid var(--accent)}
+  .sched-int{color:var(--expense)}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
   .pctfill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
@@ -231,26 +241,26 @@
       <input class="money" id="debtAllowance" type="number" step="0.01" placeholder="0.00">
       <span id="allowanceNote"></span>
     </div>
-    <div class="debts-layout">
-      <div class="debts-main">
-        <table id="debtTbl">
-          <thead><tr>
-            <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
-            <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
-            <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
-            <th class="sortable" data-sort="min">Minimum Payment<span class="si"></span></th>
-            <th class="sortable" data-sort="apr">Interest Rate<span class="si"></span></th>
-            <th class="sortable" data-sort="promoEnd">Promo End<span class="si"></span></th>
-            <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
-            <th>Pay This Month</th>
-            <th>Payoff</th>
-            <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
-          </tr></thead>
-          <tbody id="debtRows"></tbody>
-        </table>
-        <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-        <div class="hint">Enter a <b>Minimum Payment</b> and your total <b>Monthly debt allowance</b>. The plan pays every minimum, then throws the rest at the highest-interest debt first — treating a debt as <b>0% until its promo end date</b>, then its APR. <b>Pay This Month</b> is what to pay each debt right now; <b>Payoff</b> is when it clears. Click a header to sort, drag the ⠿ handle to reorder.</div>
-      </div>
+    <div class="debts-main">
+      <table id="debtTbl">
+        <thead><tr>
+          <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
+          <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
+          <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
+          <th class="sortable" data-sort="min">Minimum Payment<span class="si"></span></th>
+          <th class="sortable" data-sort="apr">Interest Rate<span class="si"></span></th>
+          <th class="sortable" data-sort="promoEnd">Promo End<span class="si"></span></th>
+          <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
+          <th>Pay This Month</th>
+          <th>Payoff</th>
+          <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
+        </tr></thead>
+        <tbody id="debtRows"></tbody>
+      </table>
+      <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
+      <div class="hint">Enter a <b>Minimum Payment</b> and your total <b>Monthly debt allowance</b>. The plan pays every minimum, then throws the rest at the highest-interest debt first — treating a debt as <b>0% until its promo end date</b>, then its APR. <b>Pay This Month</b> is what to pay each debt right now; <b>Payoff</b> is when it clears. Click a header to sort, drag the ⠿ handle to reorder.</div>
+    </div>
+    <div class="debts-lower">
       <div class="thermo-wrap">
         <div class="thermo-title">Debt-free progress</div>
         <div class="thermo-pct" id="thermoPct">0%</div>
@@ -260,8 +270,9 @@
         </div>
         <div class="thermo-stats" id="thermoStats"></div>
       </div>
+      <div id="planPanel" class="plan-panel"></div>
     </div>
-    <div id="planPanel" class="plan-panel"></div>
+    <div id="schedulePanel" class="plan-panel"></div>
   </div>
 </div>
 
@@ -826,7 +837,7 @@ function rateAt(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date
 function buildPlan(){
   const allowance=Number(state.debtAllowance)||0;
   const work=state.debts.map(d=>({id:d.id,name:d.name,bal:Math.max(0,Number(d.current)||0),min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd}));
-  const res={allowance,payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,totalMin:0,hasDebt:false,noAllowance:false};
+  const res={allowance,payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,totalMin:0,hasDebt:false,noAllowance:false,schedule:[],intByDebt:{}};
   const live=()=>work.filter(d=>d.bal>0.005);
   if(!live().length) return res;
   res.hasDebt=true;
@@ -837,11 +848,13 @@ function buildPlan(){
   while(live().length && month<MAXM){
     const date=new Date(now.getFullYear(),now.getMonth()+month,1);
     const before=live().reduce((a,d)=>a+d.bal,0);
-    live().forEach(d=>{const it=d.bal*rateAt(d,date); d.bal+=it; res.totalInterest+=it;});
+    const mInt={};
+    live().forEach(d=>{const it=d.bal*rateAt(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
     let pool=allowance; const pay={};
     live().forEach(d=>{const p=Math.min(d.min,d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;});
     live().slice().sort((a,b)=> rateAt(b,date)-rateAt(a,date) || a.bal-b.bal).forEach(d=>{ if(pool>0.005){const p=Math.min(pool,d.bal); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;} });
     if(month===0) res.payNow=pay;
+    res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), pay:{...pay}, interest:{...mInt}});
     work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
     const after=live().reduce((a,d)=>a+d.bal,0);
     month++;
@@ -852,6 +865,33 @@ function buildPlan(){
   return res;
 }
 
+function renderSchedule(plan){
+  const el=$('#schedulePanel');
+  if(!plan.hasDebt || !(plan.feasible && !plan.belowMin)){ el.innerHTML=''; return; }
+  const debts=state.debts.slice();
+  const showInt={}; debts.forEach(d=>showInt[d.id]=(plan.intByDebt[d.id]||0)>0.005);
+  let head='<th class="l">Month</th>';
+  debts.forEach(d=>{ head+=`<th>${esc(d.name||'Debt')} pay</th>`; if(showInt[d.id]) head+=`<th>${esc(d.name||'Debt')} int</th>`; });
+  head+='<th>Total</th>';
+  const totPay={}, totInt={}; let grand=0, rows='';
+  plan.schedule.forEach(row=>{
+    let tr=`<td class="l">${row.label}</td>`, mTot=0;
+    debts.forEach(d=>{
+      const p=row.pay[d.id]||0, it=row.interest[d.id]||0;
+      mTot+=p; totPay[d.id]=(totPay[d.id]||0)+p; totInt[d.id]=(totInt[d.id]||0)+it;
+      tr+=`<td>${p>0.005?fmt(p):'—'}</td>`;
+      if(showInt[d.id]) tr+=`<td class="sched-int">${it>0.005?fmt(it):'—'}</td>`;
+    });
+    grand+=mTot; tr+=`<td>${fmt(mTot)}</td>`;
+    rows+=`<tr>${tr}</tr>`;
+  });
+  let tot='<td class="l">Total</td>';
+  debts.forEach(d=>{ tot+=`<td>${fmt(totPay[d.id]||0)}</td>`; if(showInt[d.id]) tot+=`<td class="sched-int">${fmt(totInt[d.id]||0)}</td>`; });
+  tot+=`<td>${fmt(grand)}</td>`;
+  el.innerHTML=`<div class="plan-title">🗓️ Payment schedule</div>
+    <div class="plan-summary">How much to pay each debt every month until it's gone. <span class="sched-int">Red “int”</span> columns show interest accrued that month (only shown for debts that incur interest). Total interest over the whole plan: <b>${fmt(plan.totalInterest)}</b>.</div>
+    <div class="sched-wrap"><table id="schedTbl"><thead><tr>${head}</tr></thead><tbody>${rows}<tr class="totalrow">${tot}</tr></tbody></table></div>`;
+}
 function renderDebts(){
   state.debts=state.debts||[];
   // migrate old "monthly" field -> "min"; normalize promo years
@@ -955,6 +995,7 @@ function renderDebts(){
     const list = plan.order.map(o=>`<li><b>${esc(o.name)}</b> <span class="pord-when">— paid off in ${o.month} mo${o.month===1?'':'s'}</span></li>`).join('');
     $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff order — avalanche (promo-aware)</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}`;
   }
+  renderSchedule(plan);
   // thermometer (progress toward paying off ALL debts)
   const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
   const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
