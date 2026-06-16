@@ -441,13 +441,13 @@ function render(){
       html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}" data-day="${d}"${dragAttrs}>
         <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d+(isToday?' <span class="todaybadge">TODAY</span>':''):''}</td>
         <td class="c" style="color:var(--muted)">${first?dow:''}</td>
-        <td class="l">${it?it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
+        <td class="l">${it?'<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> '+it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
         <td class="c">${typeCell}</td>
         <td>${planCell}</td>
         <td>${actCell}</td>
         <td class="bal ${pBal<0?'neg':''}">${fmt(pBal)}</td>
         <td class="bal balcell ${aBal<0?'neg':''} ${reconed?'reconciled':''}" data-rk="${rk}" data-val="${aBal}" title="Click to set your real bank balance on this day">${fmt(aBal)}${adjNote}</td>
-        <td class="c">${it?'<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span>':''}</td></tr>`;
+        <td></td></tr>`;
     });
   }
   // month-end total + plan vs actual difference
