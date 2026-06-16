@@ -366,7 +366,8 @@ async function startSync(){
 function mkey(y,m){return y+'-'+String(m+1).padStart(2,'0');}
 function uid(){return Math.random().toString(36).slice(2,9);}
 
-function parseLocal(s){const a=(s||'').split('-').map(Number);return new Date(a[0],a[1]-1,a[2],12);}
+function parseLocal(s){const a=(s||'').split('-').map(Number);let y=a[0]||0;if(y>0&&y<100)y+=2000;return new Date(y,a[1]-1,a[2],12);}
+function fixIsoYear(s){if(!s)return s;const p=s.split('-');if(p.length!==3)return s;let y=+p[0];if(y>0&&y<100)y+=2000;p[0]=String(y).padStart(4,'0');return p.join('-');}
 const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function occThisMonth(it,y,m){
   const N=daysIn(y,m), out=[];
@@ -811,6 +812,7 @@ const PRIO_W={high:0,medium:1,low:2};
 let debtSort={col:'',dir:1};
 function renderDebts(){
   state.debts=state.debts||[];
+  let _fx=false; state.debts.forEach(d=>{if(d.promoEnd){const f=fixIsoYear(d.promoEnd);if(f!==d.promoEnd){d.promoEnd=f;_fx=true;}}}); if(_fx)save();
   document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
     const c=th.dataset.sort;
     th.querySelector('.si').textContent = debtSort.col===c ? (debtSort.dir>0?' ▲':' ▼') : '';
@@ -830,7 +832,7 @@ function renderDebts(){
     const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
     const promoCell=d=>{let cls='';if(d.promoEnd){const days=(parseLocal(d.promoEnd)-new Date())/864e5;cls=days<0?'promo-past':(days<60?'promo-soon':'');}
-      return `<td class="${cls}"><input class="promo debtinput" type="date" data-id="${d.id}" value="${d.promoEnd||''}"></td>`;};
+      return `<td class="${cls}"><input class="promo debtinput" type="date" min="2000-01-01" max="2099-12-31" data-id="${d.id}" value="${d.promoEnd||''}"></td>`;};
     const prioCell=d=>{const p=d.priority||'medium';
       return `<td><select class="prio debtinput prio-${p}" data-id="${d.id}">
         <option value="high"${p==='high'?' selected':''}>High</option>
@@ -861,7 +863,7 @@ function renderDebts(){
     inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.name=inp.value;save();renderDebts();}};
   });
   document.querySelectorAll('#debtRows input.promo').forEach(inp=>{
-    inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoEnd=inp.value||'';save();renderDebts();}};
+    inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoEnd=fixIsoYear(inp.value||'');save();renderDebts();}};
   });
   document.querySelectorAll('#debtRows select.prio').forEach(sel=>{
     sel.onchange=()=>{const d=state.debts.find(x=>x.id===sel.dataset.id);if(d){d.priority=sel.value;save();renderDebts();}};
