@@ -123,6 +123,19 @@
   #debtTbl input:hover{border-color:var(--line)}
   #debtTbl input:focus{outline:none;border-color:var(--accent)}
   #debtTbl tr.totalrow td{border-top:2px solid var(--accent);background:var(--panel2);font-weight:700}
+  #debtTbl th.sortable{cursor:pointer;user-select:none}
+  #debtTbl th.sortable:hover{color:var(--txt)}
+  #debtTbl .si{color:var(--accent)}
+  .moneycell{cursor:pointer}
+  .moneycell:hover{outline:1px dashed var(--accent);outline-offset:-1px}
+  input.moneyinput{background:var(--panel2);border:1px solid var(--accent);color:var(--txt);
+    width:110px;text-align:right;padding:5px 7px;border-radius:6px;font-size:13px}
+  .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+  .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
+  .pctfill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
+  .pctnum{font-weight:700;min-width:46px;text-align:right;color:var(--income)}
+  .money.auto{color:var(--muted);font-style:italic}
+  #startNote{color:var(--muted);font-size:12px}
   .thermo-wrap{width:240px;background:var(--panel);border:1px solid var(--line);border-radius:14px;
     padding:18px;text-align:center}
   .thermo-title{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px}
@@ -164,7 +177,7 @@
   <div class="startbal">
     <label>Starting bank balance for this month:</label>
     <input class="money" id="startBal" type="number" step="0.01">
-    <button class="btn ghost" id="carryBtn" title="Use last month's ending actual balance">↩ Carry from last month</button>
+    <span id="startNote"></span>
   </div>
 
   <div class="cards" id="cards"></div>
@@ -185,8 +198,13 @@
       <div class="debts-main">
         <table id="debtTbl">
           <thead><tr>
-            <th class="l">Debt</th><th>Starting Balance</th><th>Current Balance</th>
-            <th>Monthly Payment</th><th>Months Til Paid Off</th><th></th>
+            <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
+            <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
+            <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
+            <th class="sortable" data-sort="monthly">Monthly Payment<span class="si"></span></th>
+            <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
+            <th class="sortable" data-sort="months">Months Til Paid Off<span class="si"></span></th>
+            <th></th>
           </tr></thead>
           <tbody id="debtRows"></tbody>
         </table>
@@ -360,8 +378,12 @@ function render(){
   const items=itemsForMonth(cur.y,cur.m);
   const acts=state.actuals[k]||{};
   const recon=(state.recon&&state.recon[k])||{};
-  const start=Number(state.startBal[k]??0);
-  $('#startBal').value=state.startBal[k]??'';
+  const src=carrySource(cur.y,cur.m);
+  const start=startBalanceFor(cur.y,cur.m);
+  const sb=$('#startBal');
+  if(src==='explicit'){ sb.value=Number(state.startBal[k])||0; sb.classList.remove('auto'); $('#startNote').textContent=''; }
+  else if(src==='carry'){ sb.value=start.toFixed(2); sb.classList.add('auto'); $('#startNote').textContent='↩ auto-carried from last month’s ending balance — edit to override'; }
+  else { sb.value=''; sb.classList.remove('auto'); $('#startNote').textContent=''; }
   const today=new Date();
   const isCurMonth=cur.y===today.getFullYear()&&cur.m===today.getMonth();
   const todayD=today.getDate();
@@ -483,11 +505,13 @@ $('#startBal').onchange=e=>{
   if(e.target.value==='')delete state.startBal[k]; else state.startBal[k]=Number(e.target.value);
   save();render();
 };
-function computeActualEnd(y,m){
+// ---- starting-balance carry-over ----
+const CARRY_LOOKBACK=36; // months to search back for an explicit anchor balance
+function monthActualEnd(y,m,startVal){
   const k=mkey(y,m), items=itemsForMonth(y,m);
   const acts=state.actuals[k]||{}, recon=(state.recon&&state.recon[k])||{};
   const byDay={}; items.forEach(it=>{const d=Math.min(Math.max(1,+it.day||1),daysIn(y,m));(byDay[d]=byDay[d]||[]).push(it);});
-  let aBal=Number(state.startBal[k]??0), N=daysIn(y,m);
+  let aBal=startVal, N=daysIn(y,m);
   for(let d=1;d<=N;d++){
     (byDay[d]||[null]).forEach(it=>{
       if(it){const amt=Number(it.amount)||0;const av=acts[it.key];const has=av!==undefined&&av!=='';const eff=has?(Number(av)||0):amt;aBal+=it.type==='income'?eff:-eff;}
@@ -497,12 +521,25 @@ function computeActualEnd(y,m){
   }
   return aBal;
 }
-$('#carryBtn').onclick=()=>{
-  let pm=cur.m-1,py=cur.y; if(pm<0){pm=11;py--;}
-  const bal=computeActualEnd(py,pm);
-  state.startBal[mkey(cur.y,cur.m)]=bal; save();render();
-  toast('Carried '+fmt(bal)+' from '+MONTHS[pm]+' '+py);
-};
+function hasExplicitStart(k){return state.startBal[k]!==undefined&&state.startBal[k]!=='';}
+// 'explicit' = user set it; 'carry' = inherited from a prior month's actual end; 'none' = no anchor yet
+function carrySource(y,m){
+  if(hasExplicitStart(mkey(y,m))) return 'explicit';
+  let cy=y,cm=m;
+  for(let i=0;i<CARRY_LOOKBACK;i++){cm--;if(cm<0){cm=11;cy--;}if(hasExplicitStart(mkey(cy,cm)))return 'carry';}
+  return 'none';
+}
+// starting balance for a month: explicit if set, else the previous month's actual ending balance (chained from the most recent anchor)
+function startBalanceFor(y,m){
+  const k=mkey(y,m);
+  if(hasExplicitStart(k)) return Number(state.startBal[k])||0;
+  let cy=y,cm=m,anchorVal=null,ay,am;
+  for(let i=0;i<CARRY_LOOKBACK;i++){cm--;if(cm<0){cm=11;cy--;}const ck=mkey(cy,cm);if(hasExplicitStart(ck)){anchorVal=Number(state.startBal[ck])||0;ay=cy;am=cm;break;}}
+  if(anchorVal===null) return 0;
+  let bal=anchorVal,iy=ay,im=am;
+  while(!(iy===y&&im===m)){ bal=monthActualEnd(iy,im,bal); im++; if(im>11){im=0;iy++;} }
+  return bal;
+}
 
 // ---- manage modal ----
 function isoToday(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
@@ -652,39 +689,63 @@ function setTab(t){
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
 function monthsLeft(d){const c=Number(d.current)||0,p=Number(d.monthly)||0; if(c<=0)return 0; if(p<=0)return Infinity; return Math.ceil(c/p);}
+function pctPaid(d){const s=Number(d.starting)||0,c=Number(d.current)||0; return s>0?Math.max(0,Math.min(100,(s-c)/s*100)):0;}
+let debtSort={col:'',dir:1};
 function renderDebts(){
   state.debts=state.debts||[];
-  const N=state.debts.length;
-  if(!N){
-    $('#debtRows').innerHTML=`<tr><td colspan="6" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
+  // sort indicators + header clicks
+  document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
+    const c=th.dataset.sort;
+    th.querySelector('.si').textContent = debtSort.col===c ? (debtSort.dir>0?' ▲':' ▼') : '';
+    th.onclick=()=>{ if(debtSort.col===c) debtSort.dir*=-1; else {debtSort.col=c;debtSort.dir=1;} renderDebts(); };
+  });
+  // display order (sorted copy; rows reference real objects by id)
+  let disp=state.debts.slice();
+  if(debtSort.col){
+    const key={name:d=>String(d.name||'').toLowerCase(),starting:d=>Number(d.starting)||0,
+      current:d=>Number(d.current)||0,monthly:d=>Number(d.monthly)||0,pct:d=>pctPaid(d),
+      months:d=>{const m=monthsLeft(d);return m===Infinity?1e9:m;}}[debtSort.col];
+    disp.sort((a,b)=>{const ka=key(a),kb=key(b);return (ka<kb?-1:ka>kb?1:0)*debtSort.dir;});
+  }
+  if(!state.debts.length){
+    $('#debtRows').innerHTML=`<tr><td colspan="7" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
-    const body=state.debts.map((d,i)=>{
+    const mcell=(d,f)=>`<td class="moneycell" data-id="${d.id}" data-f="${f}" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
+    const body=disp.map(d=>{
       const ml=monthsLeft(d); const mlTxt=ml===Infinity?'∞':(ml+(ml===1?' mo':' mos'));
-      return `<tr data-i="${i}">
-        <td class="l"><input class="dn" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></td>
-        <td><input data-f="starting" type="number" step="0.01" value="${d.starting??''}" placeholder="0.00"></td>
-        <td><input data-f="current" type="number" step="0.01" value="${d.current??''}" placeholder="0.00"></td>
-        <td><input data-f="monthly" type="number" step="0.01" value="${d.monthly??''}" placeholder="0.00"></td>
+      const p=pctPaid(d);
+      return `<tr>
+        <td class="l"><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></td>
+        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}
+        <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td style="font-weight:700;${ml===Infinity?'color:var(--bad)':''}">${mlTxt}</td>
-        <td><button class="del" data-del="${i}" title="Delete">🗑</button></td></tr>`;
+        <td><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
     const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
     const tp=state.debts.reduce((a,d)=>a+(Number(d.monthly)||0),0);
+    const tpct=ts>0?(ts-tc)/ts*100:0;
     const anyInf=state.debts.some(d=>monthsLeft(d)===Infinity);
     const maxMl=state.debts.reduce((a,d)=>{const m=monthsLeft(d);return m===Infinity?a:Math.max(a,m);},0);
-    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tp)}</td><td>${anyInf?'∞':(maxMl+' mos')}</td><td></td></tr>`;
+    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tp)}</td><td>${tpct.toFixed(1)}%</td><td>${anyInf?'∞':(maxMl+' mos')}</td><td></td></tr>`;
     $('#debtRows').innerHTML=body+totRow;
   }
-  // wire row inputs + delete
-  document.querySelectorAll('#debtRows input').forEach(inp=>{
-    inp.classList.add('debtinput');
-    inp.onchange=()=>{const tr=inp.closest('tr');const i=+tr.dataset.i;const f=inp.dataset.f;
-      state.debts[i][f]= f==='name'?inp.value:(inp.value===''?'':Number(inp.value));
-      save(); renderDebts();};
+  // wire name inputs
+  document.querySelectorAll('#debtRows input.debtinput').forEach(inp=>{
+    inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.name=inp.value;save();renderDebts();}};
   });
-  document.querySelectorAll('#debtRows [data-del]').forEach(b=>b.onclick=()=>{
-    state.debts.splice(+b.dataset.del,1); save(); renderDebts();});
+  // delete + money click-to-edit (delegated)
+  $('#debtRows').onclick=e=>{
+    const del=e.target.closest('[data-del]');
+    if(del){state.debts=state.debts.filter(x=>x.id!==del.dataset.del);save();renderDebts();return;}
+    const cell=e.target.closest('.moneycell'); if(!cell||cell.querySelector('input'))return;
+    const id=cell.dataset.id,f=cell.dataset.f,val=cell.dataset.val;
+    cell.innerHTML=`<input class="debtinput moneyinput" type="number" step="0.01" value="${val}">`;
+    const inp=cell.querySelector('input'); inp.focus(); inp.select();
+    const commit=()=>{const d=state.debts.find(x=>x.id===id);if(d){d[f]=inp.value===''?'':Number(inp.value);}save();renderDebts();};
+    inp.onblur=commit;
+    inp.onkeydown=ev=>{if(ev.key==='Enter')inp.blur();else if(ev.key==='Escape')renderDebts();};
+  };
   // thermometer (progress toward paying off ALL debts)
   const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
   const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
@@ -725,6 +786,7 @@ $('#addDebt').onclick=()=>{
       {id:uid(),name:'Car Loan',starting:18000,current:11500,monthly:400},
       {id:uid(),name:'Student Loan',starting:12000,current:9800,monthly:180},
     ];
+    state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
     saveLocal();
   }
   render();
