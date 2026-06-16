@@ -49,6 +49,11 @@
   tr.today td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
   .todaybadge{background:var(--accent);color:#04293f;font-size:9px;font-weight:800;
     padding:1px 6px;border-radius:10px;margin-left:5px;letter-spacing:.5px;vertical-align:middle}
+  .draghandle{cursor:grab;color:var(--muted);user-select:none;font-size:15px;line-height:1}
+  .draghandle:hover{color:var(--accent)}
+  .draghandle:active{cursor:grabbing}
+  tr.dragging{opacity:.45}
+  tr.drop-target td{background:rgba(56,189,248,.20)!important;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
   .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
   .pill.income{background:rgba(52,211,153,.15);color:var(--income)}
   .pill.expense{background:rgba(248,113,113,.15);color:var(--expense)}
@@ -190,7 +195,7 @@
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="hint">Tip: <b>Actual</b> starts equal to Planned — edit any Actual to what really happened and every balance below re-adjusts. Or <b>click an Actual Balance</b> to reconcile: type your real bank balance on that day and the app inserts a balancing adjustment so totals match. Clear a cell to undo. Recurring items repeat every month automatically.</div>
+  <div class="hint">Tip: <b>Actual</b> starts equal to Planned — edit any Actual to what really happened and every balance below re-adjusts. Or <b>click an Actual Balance</b> to reconcile: type your real bank balance on that day and the app inserts a balancing adjustment so totals match. Clear a cell to undo. Recurring items repeat every month automatically. <b>Drag the ⠿ handle</b> on any row onto another day to change that item's date.</div>
   </div><!-- /budgetView -->
 
   <div id="debtsView" style="display:none">
@@ -430,7 +435,8 @@ function render(){
       const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
       const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
       const isToday=isCurMonth&&d===todayD;
-      html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}">
+      const dragAttrs= it ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
+      html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}" data-day="${d}"${dragAttrs}>
         <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d+(isToday?' <span class="todaybadge">TODAY</span>':''):''}</td>
         <td class="c" style="color:var(--muted)">${first?dow:''}</td>
         <td class="l">${it?it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
@@ -439,7 +445,7 @@ function render(){
         <td>${actCell}</td>
         <td class="bal ${pBal<0?'neg':''}">${fmt(pBal)}</td>
         <td class="bal balcell ${aBal<0?'neg':''} ${reconed?'reconciled':''}" data-rk="${rk}" data-val="${aBal}" title="Click to set your real bank balance on this day">${fmt(aBal)}${adjNote}</td>
-        <td></td></tr>`;
+        <td class="c">${it?'<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span>':''}</td></tr>`;
     });
   }
   // month-end total + plan vs actual difference
@@ -678,6 +684,49 @@ function scrollToToday(){
   const el=document.querySelector('#rows tr.today');
   if(el && $('#budgetView').style.display!=='none') el.scrollIntoView({block:'center'});
 }
+
+// ---- drag & drop to change an item's date ----
+function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+let dragInfo=null;
+function applyDrag(info,targetDay){
+  if(!info||info.srcDay===targetDay) return;
+  const k=mkey(cur.y,cur.m); let item, detail='';
+  if(info.rec){
+    item=state.recurring.find(x=>x.id===info.id); if(!item)return;
+    if(item.freq==='weekly'){ item.weekday=new Date(cur.y,cur.m,targetDay).getDay(); detail=' (every '+DOW[item.weekday]+')'; }
+    else if(item.freq==='biweekly'){
+      const a=parseLocal(item.anchor); a.setDate(a.getDate()+(targetDay-info.srcDay));
+      item.anchor=a.getFullYear()+'-'+String(a.getMonth()+1).padStart(2,'0')+'-'+String(a.getDate()).padStart(2,'0');
+      detail=' (every 2 weeks)';
+    } else { item.day=targetDay; detail=' (the '+ordinal(targetDay)+' each month)'; }
+  } else {
+    item=(state.oneoff[k]||[]).find(x=>x.id===info.id); if(!item)return; item.day=targetDay;
+  }
+  save(); render();
+  toast('Moved "'+(item.name||'item')+'" to '+MONTHS[cur.m].slice(0,3)+' '+targetDay+detail);
+}
+function setupDnD(){
+  const rows=$('#rows');
+  rows.addEventListener('dragstart',e=>{
+    const h=e.target.closest('.draghandle'); if(!h)return;
+    const tr=h.closest('tr'); if(!tr||tr.dataset.itemid===undefined)return;
+    dragInfo={id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday};
+    e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',dragInfo.id);}catch(_){}
+    tr.classList.add('dragging');
+  });
+  rows.addEventListener('dragover',e=>{
+    if(!dragInfo)return; const tr=e.target.closest('tr[data-day]'); if(!tr)return;
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    if(!tr.classList.contains('drop-target')){ rows.querySelectorAll('tr.drop-target').forEach(x=>x.classList.remove('drop-target')); tr.classList.add('drop-target'); }
+  });
+  rows.addEventListener('drop',e=>{
+    e.preventDefault(); const tr=e.target.closest('tr[data-day]');
+    rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));
+    if(dragInfo&&tr) applyDrag(dragInfo,+tr.dataset.day);
+    dragInfo=null;
+  });
+  rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));dragInfo=null;});
+}
 // ---- debts tab ----
 function setTab(t){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
@@ -790,6 +839,7 @@ $('#addDebt').onclick=()=>{
     saveLocal();
   }
   render();
+  setupDnD();
   startSync();
   // reliably land on today once layout has settled (and again after full load)
   setTimeout(scrollToToday,250);
