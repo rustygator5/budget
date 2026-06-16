@@ -125,6 +125,8 @@
   #debtTbl input{background:var(--panel2);border:1px solid transparent;color:var(--txt);
     padding:6px 8px;border-radius:6px;font-size:13px;width:110px;text-align:right}
   #debtTbl input.dn{text-align:left;width:100%;min-width:120px}
+  .namecell{display:flex;align-items:center;gap:8px}
+  .namecell .dn{flex:1;min-width:80px}
   #debtTbl input:hover{border-color:var(--line)}
   #debtTbl input:focus{outline:none;border-color:var(--accent)}
   #debtTbl tr.totalrow td{border-top:2px solid var(--accent);background:var(--panel2);font-weight:700}
@@ -799,11 +801,11 @@ function renderDebts(){
       const ml=monthsLeft(d); const mlTxt=ml===Infinity?'∞':(ml+(ml===1?' mo':' mos'));
       const p=pctPaid(d);
       return `<tr data-id="${d.id}">
-        <td class="l"><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></td>
+        <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></div></td>
         ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td style="font-weight:700;${ml===Infinity?'color:var(--bad)':''}">${mlTxt}</td>
-        <td class="c" style="white-space:nowrap"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span> <button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
+        <td class="c"><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
     const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
