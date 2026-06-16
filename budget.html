@@ -363,7 +363,7 @@ async function cloudPush(){
   }catch(e){setStatus('offline');}
 }
 function scheduleCloudPush(){clearTimeout(pushTimer);pushTimer=setTimeout(cloudPush,700);}
-function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput'))||a.id==='startBal'||(a.closest&&a.closest('.modal-bg.show')));}
+function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput'))||a.id==='startBal'||a.id==='debtAllowance'||(a.closest&&a.closest('.modal-bg.show')));}
 async function cloudPoll(){
   const row=await cloudGet();
   if(row===undefined){setStatus('offline');return;}
@@ -799,6 +799,12 @@ function setupDebtDnD(){
   });
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));debtDrag=null;});
 }
+// allowance input: bind once; live-update without clobbering what you're typing
+function setupAllowance(){
+  const el=$('#debtAllowance'); let t;
+  el.oninput=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); saveLocal(); scheduleCloudPush(); clearTimeout(t); t=setTimeout(renderDebts,300); };
+  el.onchange=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); save(); renderDebts(); };
+}
 // ---- debts tab ----
 function setTab(t){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
@@ -855,8 +861,8 @@ function renderDebts(){
     if(d.promoEnd){const f=fixIsoYear(d.promoEnd); if(f!==d.promoEnd){d.promoEnd=f;_fx=true;}}
   });
   if(_fx)save();
-  $('#debtAllowance').value = (state.debtAllowance===''||state.debtAllowance==null)?'':state.debtAllowance;
-  $('#debtAllowance').onchange=e=>{ state.debtAllowance=e.target.value===''?'':Number(e.target.value); save(); renderDebts(); };
+  const _ae=$('#debtAllowance');
+  if(document.activeElement!==_ae) _ae.value=(state.debtAllowance===''||state.debtAllowance==null)?'':state.debtAllowance;
 
   const plan=buildPlan();
   document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
@@ -996,6 +1002,7 @@ $('#addDebt').onclick=()=>{
   render();
   setupDnD();
   setupDebtDnD();
+  setupAllowance();
   startSync();
   // reliably land on today once layout has settled (and again after full load)
   setTimeout(scrollToToday,250);
