@@ -148,7 +148,19 @@
   select.prio-medium{color:var(--warn)}
   select.prio-low{color:var(--muted)}
   .debts-main{overflow-x:auto}
-  #debtTbl{min-width:860px}
+  #debtTbl{min-width:960px}
+  .allowance-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .allowance-bar label{color:var(--muted)}
+  #allowanceNote{font-size:12px}
+  .paynow{color:var(--income);font-weight:700}
+  .payoff{font-weight:700}
+  .plan-panel{margin-top:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .plan-title{font-weight:700;margin-bottom:8px}
+  .plan-summary{color:var(--muted);font-size:13px;margin-bottom:10px;line-height:1.7}
+  .plan-summary b{color:var(--txt)}
+  .plan-order{margin:0;padding-left:20px;line-height:1.9}
+  .plan-order .pord-when{color:var(--muted);font-size:12px}
+  .plan-warn{color:var(--bad);font-weight:600}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
   .pctfill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
@@ -213,6 +225,11 @@
   </div><!-- /budgetView -->
 
   <div id="debtsView" style="display:none">
+    <div class="allowance-bar">
+      <label>Monthly debt allowance:</label>
+      <input class="money" id="debtAllowance" type="number" step="0.01" placeholder="0.00">
+      <span id="allowanceNote"></span>
+    </div>
     <div class="debts-layout">
       <div class="debts-main">
         <table id="debtTbl">
@@ -220,18 +237,19 @@
             <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
             <th class="sortable" data-sort="starting">Starting Balance<span class="si"></span></th>
             <th class="sortable" data-sort="current">Current Balance<span class="si"></span></th>
-            <th class="sortable" data-sort="monthly">Monthly Payment<span class="si"></span></th>
+            <th class="sortable" data-sort="min">Minimum Payment<span class="si"></span></th>
             <th class="sortable" data-sort="apr">Interest Rate<span class="si"></span></th>
             <th class="sortable" data-sort="promoEnd">Promo End<span class="si"></span></th>
             <th class="sortable" data-sort="pct">% Paid Off<span class="si"></span></th>
-            <th class="sortable" data-sort="months">Months Til Paid Off<span class="si"></span></th>
+            <th>Pay This Month</th>
+            <th>Payoff</th>
             <th class="sortable" data-sort="priority">Priority<span class="si"></span></th>
             <th></th>
           </tr></thead>
           <tbody id="debtRows"></tbody>
         </table>
         <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-        <div class="hint">Months til paid off accounts for the <b>interest rate</b> and any <b>0% promo</b> window (interest-free until the promo end date). Update each <b>Current Balance</b> as you pay it down — the thermometer fills toward zero debt. Click a column header to sort, or drag the ⠿ handle to reorder.</div>
+        <div class="hint">Enter a <b>Minimum Payment</b> and your total <b>Monthly debt allowance</b>. The plan pays every minimum, then throws the rest at the highest-interest debt first — treating a debt as <b>0% until its promo end date</b>, then its APR. <b>Pay This Month</b> is what to pay each debt right now; <b>Payoff</b> is when it clears. Click a header to sort, drag the ⠿ handle to reorder.</div>
       </div>
       <div class="thermo-wrap">
         <div class="thermo-title">Debt-free progress</div>
@@ -243,6 +261,7 @@
         <div class="thermo-stats" id="thermoStats"></div>
       </div>
     </div>
+    <div id="planPanel" class="plan-panel"></div>
   </div>
 </div>
 
@@ -298,7 +317,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:''};
 let cur={y:0,m:0}; // current viewed month
 let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
@@ -790,29 +809,56 @@ function setTab(t){
 }
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
-// months to pay off, accounting for APR and any 0% promo window
-function monthsLeft(d){
-  let bal=Number(d.current)||0; const pay=Number(d.monthly)||0;
-  if(bal<=0) return 0;
-  if(pay<=0) return Infinity;
-  const r=(Number(d.apr)||0)/100/12;
-  let promoMonths=0;
-  if(d.promoEnd){const pe=parseLocal(d.promoEnd),now=new Date();
-    promoMonths=Math.max(0,(pe.getFullYear()-now.getFullYear())*12+(pe.getMonth()-now.getMonth()));}
-  promoMonths=Math.min(promoMonths,600);
-  let months=0;
-  for(let i=0;i<promoMonths&&bal>0;i++){bal-=pay;months++;}   // 0% during promo
-  if(bal<=0) return months;
-  if(r<=0) return months+Math.ceil(bal/pay);
-  if(pay<=bal*r) return Infinity;                              // payment can't cover interest
-  return months+Math.ceil(-Math.log(1-r*bal/pay)/Math.log(1+r));
-}
 function pctPaid(d){const s=Number(d.starting)||0,c=Number(d.current)||0; return s>0?Math.max(0,Math.min(100,(s-c)/s*100)):0;}
 const PRIO_W={high:0,medium:1,low:2};
 let debtSort={col:'',dir:1};
+
+// monthly interest rate for a debt at a given month (0% during promo window, else APR/12)
+function rateAt(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date<pe) return 0;} return (Number(d.apr)||0)/100/12; }
+
+// Promo-aware avalanche: pay every minimum, then pour the rest into the highest current-rate debt; roll over as debts clear.
+function buildPlan(){
+  const allowance=Number(state.debtAllowance)||0;
+  const work=state.debts.map(d=>({id:d.id,name:d.name,bal:Math.max(0,Number(d.current)||0),min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd}));
+  const res={allowance,payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,totalMin:0,hasDebt:false,noAllowance:false};
+  const live=()=>work.filter(d=>d.bal>0.005);
+  if(!live().length) return res;
+  res.hasDebt=true;
+  res.totalMin=live().reduce((a,d)=>a+Math.min(d.min,d.bal),0);
+  if(allowance<=0){ live().forEach(d=>res.payNow[d.id]=Math.min(d.min,d.bal)); res.feasible=false; res.noAllowance=true; return res; }
+  res.belowMin = allowance < res.totalMin-0.005;
+  const now=new Date(), cleared=new Set(); const MAXM=1200; let month=0;
+  while(live().length && month<MAXM){
+    const date=new Date(now.getFullYear(),now.getMonth()+month,1);
+    const before=live().reduce((a,d)=>a+d.bal,0);
+    live().forEach(d=>{const it=d.bal*rateAt(d,date); d.bal+=it; res.totalInterest+=it;});
+    let pool=allowance; const pay={};
+    live().forEach(d=>{const p=Math.min(d.min,d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;});
+    live().slice().sort((a,b)=> rateAt(b,date)-rateAt(a,date) || a.bal-b.bal).forEach(d=>{ if(pool>0.005){const p=Math.min(pool,d.bal); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;} });
+    if(month===0) res.payNow=pay;
+    work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
+    const after=live().reduce((a,d)=>a+d.bal,0);
+    month++;
+    if(after>0 && after>=before-0.005){ res.feasible=false; break; }   // allowance can't cover interest+min
+  }
+  if(month>=MAXM) res.feasible=false;
+  res.months=month;
+  return res;
+}
+
 function renderDebts(){
   state.debts=state.debts||[];
-  let _fx=false; state.debts.forEach(d=>{if(d.promoEnd){const f=fixIsoYear(d.promoEnd);if(f!==d.promoEnd){d.promoEnd=f;_fx=true;}}}); if(_fx)save();
+  // migrate old "monthly" field -> "min"; normalize promo years
+  let _fx=false;
+  state.debts.forEach(d=>{
+    if(d.min===undefined||d.min===null){ d.min=(d.monthly!==undefined?d.monthly:''); delete d.monthly; _fx=true; }
+    if(d.promoEnd){const f=fixIsoYear(d.promoEnd); if(f!==d.promoEnd){d.promoEnd=f;_fx=true;}}
+  });
+  if(_fx)save();
+  $('#debtAllowance').value = (state.debtAllowance===''||state.debtAllowance==null)?'':state.debtAllowance;
+  $('#debtAllowance').onchange=e=>{ state.debtAllowance=e.target.value===''?'':Number(e.target.value); save(); renderDebts(); };
+
+  const plan=buildPlan();
   document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
     const c=th.dataset.sort;
     th.querySelector('.si').textContent = debtSort.col===c ? (debtSort.dir>0?' ▲':' ▼') : '';
@@ -821,13 +867,15 @@ function renderDebts(){
   let disp=state.debts.slice();
   if(debtSort.col){
     const key={name:d=>String(d.name||'').toLowerCase(),starting:d=>Number(d.starting)||0,
-      current:d=>Number(d.current)||0,monthly:d=>Number(d.monthly)||0,apr:d=>Number(d.apr)||0,
+      current:d=>Number(d.current)||0,min:d=>Number(d.min)||0,apr:d=>Number(d.apr)||0,
       promoEnd:d=>d.promoEnd?parseLocal(d.promoEnd).getTime():Infinity,pct:d=>pctPaid(d),
-      months:d=>{const m=monthsLeft(d);return m===Infinity?1e9:m;},priority:d=>PRIO_W[d.priority||'medium']}[debtSort.col];
+      priority:d=>PRIO_W[d.priority||'medium']}[debtSort.col];
     disp.sort((a,b)=>{const ka=key(a),kb=key(b);return (ka<kb?-1:ka>kb?1:0)*debtSort.dir;});
   }
+  const payoffTxt=d=>{ if((Number(d.current)||0)<=0.005) return 'Paid'; const m=plan.payoff[d.id]; return m?(m+(m===1?' mo':' mos')):'—'; };
+  const payNowTxt=d=>{ const v=plan.payNow[d.id]; return v!=null?fmt(v):'—'; };
   if(!state.debts.length){
-    $('#debtRows').innerHTML=`<tr><td colspan="10" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
+    $('#debtRows').innerHTML=`<tr><td colspan="11" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
     const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
@@ -839,23 +887,23 @@ function renderDebts(){
         <option value="medium"${p==='medium'?' selected':''}>Medium</option>
         <option value="low"${p==='low'?' selected':''}>Low</option></select></td>`;};
     const body=disp.map(d=>{
-      const ml=monthsLeft(d); const mlTxt=ml===Infinity?'∞':(ml+(ml===1?' mo':' mos'));
       const p=pctPaid(d);
       return `<tr data-id="${d.id}">
         <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"></div></td>
-        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'monthly')}${pcell(d,'apr')}${promoCell(d)}
+        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'min')}${pcell(d,'apr')}${promoCell(d)}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
-        <td style="font-weight:700;${ml===Infinity?'color:var(--bad)':''}">${mlTxt}</td>
+        <td class="paynow">${payNowTxt(d)}</td>
+        <td class="payoff">${payoffTxt(d)}</td>
         ${prioCell(d)}
         <td class="c"><button class="del" data-del="${d.id}" title="Delete">🗑</button></td></tr>`;
     }).join('');
     const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
     const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
-    const tp=state.debts.reduce((a,d)=>a+(Number(d.monthly)||0),0);
+    const tmin=state.debts.reduce((a,d)=>a+(Number(d.min)||0),0);
     const tpct=ts>0?(ts-tc)/ts*100:0;
-    const anyInf=state.debts.some(d=>monthsLeft(d)===Infinity);
-    const maxMl=state.debts.reduce((a,d)=>{const m=monthsLeft(d);return m===Infinity?a:Math.max(a,m);},0);
-    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tp)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${anyInf?'∞':(maxMl+' mos')}</td><td></td><td></td></tr>`;
+    const payNowSum=Object.values(plan.payNow).reduce((a,b)=>a+b,0);
+    const payoffTot=plan.feasible&&plan.hasDebt?(plan.months+' mos'):(plan.hasDebt?'—':'');
+    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tmin)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${fmt(payNowSum)}</td><td>${payoffTot}</td><td></td><td></td></tr>`;
     $('#debtRows').innerHTML=body+totRow;
   }
   // wire name / promo / priority
@@ -880,10 +928,31 @@ function renderDebts(){
     inp.onblur=commit;
     inp.onkeydown=ev=>{if(ev.key==='Enter')inp.blur();else if(ev.key==='Escape')renderDebts();};
   };
+  // allowance note
+  if(plan.hasDebt){
+    let note=`Minimums total <b>${fmt(plan.totalMin)}</b>/mo.`;
+    if(plan.noAllowance) note+=` <span class="plan-warn">Set an allowance to build a plan.</span>`;
+    else if(plan.belowMin) note+=` <span class="plan-warn">Below your minimums — raise it to at least ${fmt(plan.totalMin)}.</span>`;
+    else if(!plan.feasible) note+=` <span class="plan-warn">Below what's needed to cover interest + minimums.</span>`;
+    $('#allowanceNote').innerHTML=note;
+  } else $('#allowanceNote').textContent='';
+  // payoff plan panel
+  if(!plan.hasDebt){ $('#planPanel').innerHTML=''; }
+  else {
+    let warn='';
+    if(plan.noAllowance) warn='<div class="plan-warn">Enter a monthly allowance above to build your payoff plan.</div>';
+    else if(plan.belowMin) warn=`<div class="plan-warn">Your allowance (${fmt(plan.allowance)}) is below the total minimum payments (${fmt(plan.totalMin)}/mo) — you can’t cover every minimum. Raise the allowance to at least ${fmt(plan.totalMin)}.</div>`;
+    else if(!plan.feasible) warn='<div class="plan-warn">Your allowance doesn’t cover the minimum payments plus interest — increase it to clear these debts.</div>';
+    const showPlan = plan.feasible && !plan.belowMin;
+    const summary = showPlan
+      ? `With <b>${fmt(plan.allowance)}/mo</b> you'll be debt-free in <b>${plan.months} months</b> (~${(plan.months/12).toFixed(1)} yrs). Total interest paid: <b>${fmt(plan.totalInterest)}</b>.`
+      : '';
+    const list = plan.order.map(o=>`<li><b>${esc(o.name)}</b> <span class="pord-when">— paid off in ${o.month} mo${o.month===1?'':'s'}</span></li>`).join('');
+    $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff order — avalanche (promo-aware)</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}`;
+  }
   // thermometer (progress toward paying off ALL debts)
   const ts=state.debts.reduce((a,d)=>a+(Number(d.starting)||0),0);
   const tc=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
-  const tp=state.debts.reduce((a,d)=>a+(Number(d.monthly)||0),0);
   const paid=Math.max(0,ts-tc); const pct= ts>0? Math.min(100,paid/ts*100):0;
   $('#thermoFill').style.height=pct.toFixed(1)+'%';
   $('#thermoPct').textContent=Math.round(pct)+'%';
@@ -891,11 +960,11 @@ function renderDebts(){
     `<div>Paid off: <b style="color:var(--income)">${fmt(paid)}</b></div>
      <div>Remaining: <b style="color:var(--expense)">${fmt(tc)}</b></div>
      <div>Total debt: <b>${fmt(ts)}</b></div>
-     <div>Monthly toward debt: <b>${fmt(tp)}</b></div>`;
+     <div>Monthly allowance: <b>${fmt(Number(state.debtAllowance)||0)}</b></div>`;
 }
 $('#addDebt').onclick=()=>{
   state.debts=state.debts||[];
-  state.debts.push({id:uid(),name:'',starting:'',current:'',monthly:'',apr:'',promoEnd:'',priority:'medium'});
+  state.debts.push({id:uid(),name:'',starting:'',current:'',min:'',apr:'',promoEnd:'',priority:'medium'});
   save(); renderDebts();
 };
 
@@ -916,10 +985,11 @@ $('#addDebt').onclick=()=>{
       {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
     ];
     state.debts=[
-      {id:uid(),name:'Credit Card',starting:5000,current:3200,monthly:250,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
-      {id:uid(),name:'Car Loan',starting:18000,current:11500,monthly:400,apr:6.5,promoEnd:'',priority:'medium'},
-      {id:uid(),name:'Student Loan',starting:12000,current:9800,monthly:180,apr:4.5,promoEnd:'',priority:'low'},
+      {id:uid(),name:'Credit Card',starting:5000,current:3200,min:60,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
+      {id:uid(),name:'Car Loan',starting:18000,current:11500,min:400,apr:6.5,promoEnd:'',priority:'medium'},
+      {id:uid(),name:'Student Loan',starting:12000,current:9800,min:180,apr:4.5,promoEnd:'',priority:'low'},
     ];
+    state.debtAllowance=1000;
     state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
     saveLocal();
   }
