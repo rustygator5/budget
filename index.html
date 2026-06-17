@@ -150,6 +150,8 @@
   #debtTbl td.promo-past input.promo{border-color:var(--bad);color:var(--bad)}
   #debtTbl select.prio{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     padding:5px 8px;border-radius:6px;font-size:13px;font-weight:700}
+  #debtTbl select.dtype{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:5px 6px;border-radius:6px;font-size:12px}
   select.prio-high{color:var(--expense);border-color:rgba(248,113,113,.6)!important}
   select.prio-medium{color:var(--warn)}
   select.prio-low{color:var(--muted)}
@@ -253,6 +255,7 @@
       <table id="debtTbl">
         <thead><tr>
           <th class="l sortable" data-sort="name">Debt<span class="si"></span></th>
+          <th class="sortable" data-sort="type">Type<span class="si"></span></th>
           <th class="sortable" data-sort="starting">Starting<span class="si"></span></th>
           <th class="sortable" data-sort="current">Current<span class="si"></span></th>
           <th class="sortable" data-sort="min">Min Pmt<span class="si"></span></th>
@@ -266,7 +269,7 @@
         <tbody id="debtRows"></tbody>
       </table>
       <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-      <div class="hint">Enter a <b>Minimum Payment</b> and your total <b>Monthly debt allowance</b>. The plan pays every minimum, then throws the rest at the highest-interest debt first — treating a debt as <b>0% until its promo end date</b>, then its APR. <b>Pay This Month</b> is what to pay each debt right now; <b>Payoff</b> is when it clears. Click a header to sort, drag the ⠿ handle to reorder.</div>
+      <div class="hint">Set each debt's <b>Type</b>, <b>Minimum Payment</b>, <b>APR</b>, and any <b>0% Promo End</b> date, plus your total <b>Monthly debt allowance</b>. All types accrue ~APR/12 monthly on the balance, but <b>credit cards</b> revolve with %-of-balance minimums and promo rates, while <b>auto loans &amp; mortgages</b> are fixed installments. The planner tests several strategies — including <b>clearing 0% promos before they expire</b> — and picks the one with the <b>least total interest</b>. <b>Pay This Month</b> is what to pay each debt now; <b>Payoff</b> is when it clears. Sort by any header; drag ⠿ to reorder.</div>
     </div>
     <div class="debts-lower">
       <div class="thermo-wrap">
@@ -838,39 +841,99 @@ function pctPaid(d){const s=Number(d.starting)||0,c=Number(d.current)||0; return
 const PRIO_W={high:0,medium:1,low:2};
 let debtSort={col:'',dir:1};
 
-// monthly interest rate for a debt at a given month (0% during promo window, else APR/12)
-function rateAt(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date<pe) return 0;} return (Number(d.apr)||0)/100/12; }
+// --- interest mechanics ---
+// All three accrue simple monthly interest = balance × APR/12; payments hit principal.
+// Credit cards revolve (compound any unpaid interest) with %-of-balance minimums + promo APRs;
+// auto loans & mortgages are fixed amortizing installments. Promo = 0% until promoEnd, then APR.
+function monthlyRate(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date<pe) return 0;} return (Number(d.apr)||0)/100/12; }
+function fullRate(d){ return (Number(d.apr)||0)/100/12; }              // rate once promo ends
+function inPromo(d,date){ return d.promoEnd && date<parseLocal(d.promoEnd); }
+function promoMonthsLeft(d,fromDate){ if(!d.promoEnd)return 0; const pe=parseLocal(d.promoEnd);
+  return Math.max(0,(pe.getFullYear()-fromDate.getFullYear())*12+(pe.getMonth()-fromDate.getMonth())); }
+// realistic minimum: credit cards = greater of entered min or ~2% of balance (covers interest, shrinks as balance falls); installments = fixed entered min
+function requiredMin(d,bal,date){
+  const userMin=Math.max(0,Number(d.min)||0);
+  let m = d.type==='card' ? Math.max(userMin, 0.02*bal) : userMin;
+  return Math.min(m,bal);
+}
 
-// Promo-aware avalanche: pay every minimum, then pour the rest into the highest current-rate debt; roll over as debts clear.
-function buildPlan(){
+// Simulate a payoff with a given allocation strategy; returns full month-by-month results.
+// Every contractual minimum is ALWAYS paid first; only the leftover "extra" is steered by the strategy.
+function simulatePlan(strat){
   const allowance=Number(state.debtAllowance)||0;
-  const work=state.debts.map(d=>({id:d.id,name:d.name,bal:Math.max(0,Number(d.current)||0),min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd}));
-  const res={allowance,payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,totalMin:0,hasDebt:false,noAllowance:false,schedule:[],intByDebt:{}};
+  const work=state.debts.filter(d=>(Number(d.current)||0)>0.005)
+    .map(d=>({id:d.id,name:d.name,bal:Number(d.current)||0,min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd,type:d.type}));
+  const res={payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,schedule:[],intByDebt:{}};
+  if(!work.length){res.empty=true;return res;}
   const live=()=>work.filter(d=>d.bal>0.005);
-  if(!live().length) return res;
-  res.hasDebt=true;
-  res.totalMin=live().reduce((a,d)=>a+Math.min(d.min,d.bal),0);
-  if(allowance<=0){ live().forEach(d=>res.payNow[d.id]=Math.min(d.min,d.bal)); res.feasible=false; res.noAllowance=true; return res; }
-  res.belowMin = allowance < res.totalMin-0.005;
   const now=new Date(), cleared=new Set(); const MAXM=1200; let month=0;
   while(live().length && month<MAXM){
     const date=new Date(now.getFullYear(),now.getMonth()+month,1);
     const before=live().reduce((a,d)=>a+d.bal,0);
     const mInt={};
-    live().forEach(d=>{const it=d.bal*rateAt(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
-    let pool=allowance; const pay={};
-    live().forEach(d=>{const p=Math.min(d.min,d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;});
-    live().slice().sort((a,b)=> rateAt(b,date)-rateAt(a,date) || a.bal-b.bal).forEach(d=>{ if(pool>0.005){const p=Math.min(pool,d.bal); d.bal-=p; pool-=p; pay[d.id]=(pay[d.id]||0)+p;} });
-    if(month===0) res.payNow=pay;
+    live().forEach(d=>{const it=d.bal*monthlyRate(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
+    let pool=allowance; const pay={}, minPaid={};
+    // 1) true contractual minimum on every debt
+    live().forEach(d=>{const m=requiredMin(d,d.bal,date); const p=Math.min(Math.max(0,m),d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=p; minPaid[d.id]=p;});
+    // 2) strategy steers the extra
+    const extra=strat.allocExtra(live(),date,pool,minPaid)||{};
+    live().forEach(d=>{ const e=Math.min(extra[d.id]||0,d.bal,Math.max(0,pool)); if(e>0){d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
+    // 3) any leftover -> current-rate avalanche (also the whole 'avalanche' strategy)
+    live().slice().sort((a,b)=>monthlyRate(b,date)-monthlyRate(a,date)||a.bal-b.bal).forEach(d=>{ if(pool>0.005){const e=Math.min(pool,d.bal); d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
+    if(month===0) res.payNow={...pay};
     res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), pay:{...pay}, interest:{...mInt}});
     work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
     const after=live().reduce((a,d)=>a+d.bal,0);
     month++;
-    if(after>0 && after>=before-0.005){ res.feasible=false; break; }   // allowance can't cover interest+min
+    if(after>0 && after>=before-0.005){ res.feasible=false; break; }
   }
   if(month>=MAXM) res.feasible=false;
   res.months=month;
   return res;
+}
+
+// Candidate strategies — the planner runs each and keeps the one with the LEAST total interest.
+const STRATEGIES=[
+  // pure avalanche: leave extra to the fallback (highest current rate first)
+  { id:'avalanche', label:'highest-rate first (avalanche)', allocExtra:()=>({}) },
+  // clear each 0% promo on a just-in-time schedule so none of it ever sees the high APR
+  { id:'promo-deadline', label:'clear 0% promos before they expire',
+    allocExtra:(debts,date,pool,minPaid)=>{ const m={}; let p=pool;
+      debts.filter(d=>inPromo(d,date)&&(Number(d.apr)||0)>0)
+        .sort((a,b)=> parseLocal(a.promoEnd)-parseLocal(b.promoEnd) || fullRate(b)-fullRate(a))
+        .forEach(d=>{ const pm=promoMonthsLeft(d,date)||1; const preMin=d.bal+(minPaid[d.id]||0);
+          const need=Math.max(0, preMin/pm-(minPaid[d.id]||0)); const e=Math.min(need,p,d.bal);
+          if(e>0){ m[d.id]=(m[d.id]||0)+e; p-=e; } });
+      return m; } },
+  // throw extra at the highest eventual (post-promo) APR
+  { id:'eventual', label:'highest post-promo rate first',
+    allocExtra:(debts,date,pool)=>{ const m={}; let p=pool;
+      debts.slice().sort((a,b)=>fullRate(b)-fullRate(a)||a.bal-b.bal).forEach(d=>{const e=Math.min(p,d.bal); if(e>0){m[d.id]=e; p-=e;}}); return m; } },
+];
+
+// Run all feasible strategies, pick least-interest; compare against plain avalanche for savings.
+function buildPlan(){
+  const allowance=Number(state.debtAllowance)||0;
+  const liveDebts=state.debts.filter(d=>(Number(d.current)||0)>0.005);
+  const base={allowance,hasDebt:liveDebts.length>0,noAllowance:false,belowMin:false,feasible:true,
+    totalMin:0,payNow:{},payoff:{},order:[],totalInterest:0,months:0,schedule:[],intByDebt:{},
+    strategyId:'avalanche',strategyLabel:'',savedVsNaive:0};
+  if(!liveDebts.length) return base;
+  const now=new Date();
+  base.totalMin=liveDebts.reduce((a,d)=>a+requiredMin(d,Number(d.current)||0,now),0);
+  if(allowance<=0){ liveDebts.forEach(d=>base.payNow[d.id]=requiredMin(d,Number(d.current)||0,now)); base.feasible=false; base.noAllowance=true; return base; }
+  if(allowance < base.totalMin-0.005){ base.feasible=false; base.belowMin=true; return base; }
+  let best=null, naive=null;
+  for(const s of STRATEGIES){
+    const r=simulatePlan(s); r.strategyId=s.id; r.strategyLabel=s.label;
+    if(s.id==='avalanche') naive=r;
+    if(!r.feasible) continue;
+    if(!best || r.totalInterest < best.totalInterest-0.005) best=r;
+  }
+  if(!best){ base.feasible=false; return best=base; }
+  Object.assign(best,{allowance,hasDebt:true,noAllowance:false,belowMin:false,feasible:true,totalMin:base.totalMin});
+  best.savedVsNaive = (naive&&naive.feasible)? Math.max(0,naive.totalInterest-best.totalInterest) : 0;
+  return best;
 }
 
 function renderSchedule(plan){
@@ -920,7 +983,7 @@ function renderDebts(){
   });
   let disp=state.debts.slice();
   if(debtSort.col){
-    const key={name:d=>String(d.name||'').toLowerCase(),starting:d=>Number(d.starting)||0,
+    const key={name:d=>String(d.name||'').toLowerCase(),type:d=>String(d.type||'other'),starting:d=>Number(d.starting)||0,
       current:d=>Number(d.current)||0,min:d=>Number(d.min)||0,apr:d=>Number(d.apr)||0,
       promoEnd:d=>d.promoEnd?parseLocal(d.promoEnd).getTime():Infinity,pct:d=>pctPaid(d),
       priority:d=>PRIO_W[d.priority||'medium']}[debtSort.col];
@@ -929,7 +992,7 @@ function renderDebts(){
   const payoffTxt=d=>{ if((Number(d.current)||0)<=0.005) return 'Paid'; const m=plan.payoff[d.id]; return m?(m+(m===1?' mo':' mos')):'—'; };
   const payNowTxt=d=>{ const v=plan.payNow[d.id]; return v!=null?fmt(v):'—'; };
   if(!state.debts.length){
-    $('#debtRows').innerHTML=`<tr><td colspan="10" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
+    $('#debtRows').innerHTML=`<tr><td colspan="11" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
     const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
@@ -940,11 +1003,14 @@ function renderDebts(){
         <option value="high"${p==='high'?' selected':''}>High</option>
         <option value="medium"${p==='medium'?' selected':''}>Medium</option>
         <option value="low"${p==='low'?' selected':''}>Low</option></select></td>`;};
+    const TYPES=[['card','Credit Card'],['auto','Auto Loan'],['mortgage','Mortgage'],['personal','Personal'],['other','Other']];
+    const typeCell=d=>{const t=d.type||'other';
+      return `<td><select class="dtype debtinput" data-id="${d.id}" title="How this debt accrues interest">${TYPES.map(([v,l])=>`<option value="${v}"${t===v?' selected':''}>${l}</option>`).join('')}</select></td>`;};
     const body=disp.map(d=>{
       const p=pctPaid(d);
       return `<tr data-id="${d.id}">
         <td class="l"><div class="namecell"><span class="draghandle" draggable="true" title="Drag to reorder">⠿</span><input class="dn debtinput" data-id="${d.id}" data-f="name" value="${esc(d.name||'')}" placeholder="Debt name"><button class="del" data-del="${d.id}" title="Delete debt">🗑</button></div></td>
-        ${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'min')}${pcell(d,'apr')}${promoCell(d)}
+        ${typeCell(d)}${mcell(d,'starting')}${mcell(d,'current')}${mcell(d,'min')}${pcell(d,'apr')}${promoCell(d)}
         <td><div class="pctwrap"><div class="pctbar"><div class="pctfill" style="width:${p.toFixed(1)}%"></div></div><span class="pctnum">${p.toFixed(1)}%</span></div></td>
         <td class="paynow">${payNowTxt(d)}</td>
         <td class="payoff">${payoffTxt(d)}</td>
@@ -956,7 +1022,7 @@ function renderDebts(){
     const tpct=ts>0?(ts-tc)/ts*100:0;
     const payNowSum=Object.values(plan.payNow).reduce((a,b)=>a+b,0);
     const payoffTot=plan.feasible&&plan.hasDebt?(plan.months+' mos'):(plan.hasDebt?'—':'');
-    const totRow=`<tr class="totalrow"><td class="l">Total</td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tmin)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${fmt(payNowSum)}</td><td>${payoffTot}</td><td></td></tr>`;
+    const totRow=`<tr class="totalrow"><td class="l">Total</td><td></td><td>${fmt(ts)}</td><td>${fmt(tc)}</td><td>${fmt(tmin)}</td><td></td><td></td><td>${tpct.toFixed(1)}%</td><td>${fmt(payNowSum)}</td><td>${payoffTot}</td><td></td></tr>`;
     $('#debtRows').innerHTML=body+totRow;
   }
   // wire name / promo / priority
@@ -968,6 +1034,9 @@ function renderDebts(){
   });
   document.querySelectorAll('#debtRows select.prio').forEach(sel=>{
     sel.onchange=()=>{const d=state.debts.find(x=>x.id===sel.dataset.id);if(d){d.priority=sel.value;save();renderDebts();}};
+  });
+  document.querySelectorAll('#debtRows select.dtype').forEach(sel=>{
+    sel.onchange=()=>{const d=state.debts.find(x=>x.id===sel.dataset.id);if(d){d.type=sel.value;save();renderDebts();}};
   });
   // delete + click-to-edit money/percent cells (delegated)
   $('#debtRows').onclick=e=>{
@@ -997,11 +1066,20 @@ function renderDebts(){
     else if(plan.belowMin) warn=`<div class="plan-warn">Your allowance (${fmt(plan.allowance)}) is below the total minimum payments (${fmt(plan.totalMin)}/mo) — you can’t cover every minimum. Raise the allowance to at least ${fmt(plan.totalMin)}.</div>`;
     else if(!plan.feasible) warn='<div class="plan-warn">Your allowance doesn’t cover the minimum payments plus interest — increase it to clear these debts.</div>';
     const showPlan = plan.feasible && !plan.belowMin;
-    const summary = showPlan
-      ? `With <b>${fmt(plan.allowance)}/mo</b> you'll be debt-free in <b>${plan.months} months</b> (~${(plan.months/12).toFixed(1)} yrs). Total interest paid: <b>${fmt(plan.totalInterest)}</b>.`
-      : '';
+    let summary='';
+    if(showPlan){
+      summary=`Strategy: <b>${esc(plan.strategyLabel||'avalanche')}</b> — chosen to accrue the least interest. `
+        +`With <b>${fmt(plan.allowance)}/mo</b> you'll be debt-free in <b>${plan.months} months</b> (~${(plan.months/12).toFixed(1)} yrs); total interest <b>${fmt(plan.totalInterest)}</b>.`;
+      if(plan.savedVsNaive>1) summary+=` <span style="color:var(--income)">That's ${fmt(plan.savedVsNaive)} less interest than a plain avalanche that lets promo balances sit until they expire.</span>`;
+    }
+    // promo-deadline callouts (future interest you can dodge)
+    let promoNote='';
+    const now=new Date();
+    const promos=state.debts.filter(d=>(Number(d.current)||0)>0.005 && d.promoEnd && parseLocal(d.promoEnd)>now && (Number(d.apr)||0)>0)
+      .map(d=>`<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge that interest.</li>`).join('');
+    if(showPlan && promos) promoNote=`<div class="plan-summary" style="margin-top:6px">⏳ Promo deadlines:</div><ul class="plan-order">${promos}</ul>`;
     const list = plan.order.map(o=>`<li><b>${esc(o.name)}</b> <span class="pord-when">— paid off in ${o.month} mo${o.month===1?'':'s'}</span></li>`).join('');
-    $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff order — avalanche (promo-aware)</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}`;
+    $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff plan — least-interest</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}${promoNote}`;
   }
   renderSchedule(plan);
   // thermometer (progress toward paying off ALL debts)
@@ -1018,7 +1096,7 @@ function renderDebts(){
 }
 $('#addDebt').onclick=()=>{
   state.debts=state.debts||[];
-  state.debts.push({id:uid(),name:'',starting:'',current:'',min:'',apr:'',promoEnd:'',priority:'medium'});
+  state.debts.push({id:uid(),name:'',type:'card',starting:'',current:'',min:'',apr:'',promoEnd:'',priority:'medium'});
   save(); renderDebts();
 };
 
@@ -1039,9 +1117,9 @@ $('#addDebt').onclick=()=>{
       {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
     ];
     state.debts=[
-      {id:uid(),name:'Credit Card',starting:5000,current:3200,min:60,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
-      {id:uid(),name:'Car Loan',starting:18000,current:11500,min:400,apr:6.5,promoEnd:'',priority:'medium'},
-      {id:uid(),name:'Student Loan',starting:12000,current:9800,min:180,apr:4.5,promoEnd:'',priority:'low'},
+      {id:uid(),name:'Credit Card',type:'card',starting:5000,current:3200,min:60,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
+      {id:uid(),name:'Car Loan',type:'auto',starting:18000,current:11500,min:400,apr:6.5,promoEnd:'',priority:'medium'},
+      {id:uid(),name:'Student Loan',type:'personal',starting:12000,current:9800,min:180,apr:4.5,promoEnd:'',priority:'low'},
     ];
     state.debtAllowance=1000;
     state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
