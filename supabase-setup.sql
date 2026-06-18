@@ -4,10 +4,11 @@
 -- Project: https://xuipllbtrsebavtffjdy.supabase.co  (same one DivTracker uses)
 -- ============================================================
 
--- If you created the OLD shared (id text) budgets table earlier, drop it first:
--- drop table if exists public.budgets;
+-- Drops any earlier (shared/id-based) budgets table so this fresh per-account
+-- one is created cleanly. Safe for first-time setup; the app does not read the old table.
+drop table if exists public.budgets;
 
-create table if not exists public.budgets (
+create table public.budgets (
   user_id     uuid        primary key references auth.users(id) on delete cascade,
   data        jsonb       not null default '{}'::jsonb,
   updated_at  timestamptz not null default now()
