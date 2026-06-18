@@ -1,24 +1,37 @@
 -- ============================================================
--- Monthly Budget — one-time Supabase setup
+-- Monthly Budget — one-time Supabase setup (per-account, private)
 -- Run in: Supabase dashboard -> your project -> SQL Editor -> New query -> Run
 -- Project: https://xuipllbtrsebavtffjdy.supabase.co  (same one DivTracker uses)
 -- ============================================================
 
+-- If you created the OLD shared (id text) budgets table earlier, drop it first:
+-- drop table if exists public.budgets;
+
 create table if not exists public.budgets (
-  id          text primary key,
+  user_id     uuid        primary key references auth.users(id) on delete cascade,
   data        jsonb       not null default '{}'::jsonb,
   updated_at  timestamptz not null default now()
 );
 
 alter table public.budgets enable row level security;
 
--- Access model: anyone with the app's publishable (anon) key AND the secret
--- budget id (the #b=... in the share link) can read/write that budget.
-drop policy if exists "budgets anon read"   on public.budgets;
-drop policy if exists "budgets anon insert" on public.budgets;
-drop policy if exists "budgets anon update" on public.budgets;
-create policy "budgets anon read"   on public.budgets for select using (true);
-create policy "budgets anon insert" on public.budgets for insert with check (true);
-create policy "budgets anon update" on public.budgets for update using (true) with check (true);
+-- Each signed-in user can only see and change THEIR OWN row.
+drop policy if exists "own budget select" on public.budgets;
+drop policy if exists "own budget insert" on public.budgets;
+drop policy if exists "own budget update" on public.budgets;
+create policy "own budget select" on public.budgets for select using (auth.uid() = user_id);
+create policy "own budget insert" on public.budgets for insert with check (auth.uid() = user_id);
+create policy "own budget update" on public.budgets for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-grant select, insert, update on public.budgets to anon;
+grant select, insert, update on public.budgets to authenticated;
+
+-- ============================================================
+-- ALSO do this in the dashboard (not SQL):
+--  1. Authentication -> Providers -> Email: make sure it's ENABLED.
+--  2. (Optional, for instant signups) Authentication -> Providers -> Email
+--     -> turn OFF "Confirm email" so new users can sign in immediately.
+--     Leave it ON if you want users to verify their email first.
+--  3. Authentication -> URL Configuration -> Site URL:
+--     set to  https://rustygator5.github.io/budget/
+--     (used for password-reset links).
+-- ============================================================

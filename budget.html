@@ -203,9 +203,33 @@
   .thermo-stats b{color:var(--txt)}
   @media(max-width:680px){.thermo-wrap{width:100%}}
   @media(max-width:680px){.formrow{grid-template-columns:1fr 1fr}.cards{grid-template-columns:1fr 1fr}}
+  /* auth */
+  .auth-overlay{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
+  .auth-overlay.show{display:flex}
+  .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;width:340px;max-width:94vw;display:flex;flex-direction:column;gap:10px}
+  .auth-logo{font-size:22px;font-weight:800;text-align:center}
+  .auth-sub{color:var(--muted);text-align:center;font-size:13px;margin-bottom:6px}
+  .auth-box input{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:10px;border-radius:8px;font-size:14px}
+  .auth-box input:focus{outline:none;border-color:var(--accent)}
+  .auth-box .btn{width:100%;padding:10px}
+  .auth-msg{font-size:12px;color:var(--muted);min-height:15px;text-align:center}
+  .auth-link{color:var(--accent);font-size:12px;cursor:pointer;text-align:center;display:block;margin-top:2px}
+  .acct-email{color:var(--muted);font-size:12px;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
+<div class="auth-overlay show" id="authOverlay">
+  <div class="auth-box">
+    <div class="auth-logo">💰 Budget</div>
+    <div class="auth-sub">Sign in to your own private budget</div>
+    <input id="authEmail" type="email" placeholder="Email" autocomplete="username">
+    <input id="authPw" type="password" placeholder="Password" autocomplete="current-password">
+    <div id="authMsg" class="auth-msg"></div>
+    <button class="btn" id="authSignIn">Sign in</button>
+    <button class="btn ghost" id="authSignUp">Create account</button>
+    <a id="authForgot" class="auth-link">Forgot password?</a>
+  </div>
+</div>
 <header>
   <h1>💰 Budget</h1>
   <div class="tabs">
@@ -214,8 +238,9 @@
   </div>
   <div class="spacer"></div>
   <button class="btn" id="manageBtn">＋ Manage items</button>
-  <button class="btn ghost" id="shareBtn">🔗 Share</button>
   <button class="btn ghost" id="ioBtn">⇅ Backup</button>
+  <span id="acctEmail" class="acct-email" title="Signed-in account"></span>
+  <button class="btn ghost" id="signOutBtn">Sign out</button>
   <span id="syncStatus" title="Sync status" style="font-size:18px;color:#94a3b8;cursor:default">●</span>
 </header>
 
@@ -330,63 +355,72 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const KEY='budgetApp.v1';
-// ─── SUPABASE (shared live sync) ───
+const KEY='budgetApp';
+// ─── SUPABASE (per-account private sync) ───
 const SUPA_URL='https://xuipllbtrsebavtffjdy.supabase.co';
 const SUPA_KEY='sb_publishable_4Uc4-PMVI4Bsodk6FYYEjg_h2o5xZ0j';
-const SHEAD={'apikey':SUPA_KEY,'Content-Type':'application/json'};
+const AUTH=SUPA_URL+'/auth/v1', REST=SUPA_URL+'/rest/v1';
+const H={'apikey':SUPA_KEY,'Content-Type':'application/json'};
 const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:''};
 let cur={y:0,m:0}; // current viewed month
-let budgetId=null, freshId=false, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
+let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
-// ---- local cache (per budget id) ----
-function lsKey(){return KEY+':'+budgetId;}
+// ---- auth ----
+function authHeaders(){return {...H,'Authorization':'Bearer '+((session&&session.access_token)||'')};}
+function saveSession(s){session={access_token:s.access_token,refresh_token:s.refresh_token,user:s.user};localStorage.setItem(KEY+'.session',JSON.stringify(session));}
+function clearSession(){session=null;localStorage.removeItem(KEY+'.session');}
+async function authSignIn(email,pw){const r=await fetch(AUTH+'/token?grant_type=password',{method:'POST',headers:H,body:JSON.stringify({email,password:pw})});return r.json();}
+async function authSignUp(email,pw){const r=await fetch(AUTH+'/signup',{method:'POST',headers:H,body:JSON.stringify({email,password:pw})});return r.json();}
+async function authRecover(email){try{await fetch(AUTH+'/recover',{method:'POST',headers:H,body:JSON.stringify({email})});}catch(e){}}
+async function authRefresh(){
+  if(!session||!session.refresh_token)return false;
+  try{const r=await fetch(AUTH+'/token?grant_type=refresh_token',{method:'POST',headers:H,body:JSON.stringify({refresh_token:session.refresh_token})});
+    if(!r.ok)return false; const s=await r.json(); if(s&&s.access_token){saveSession(s);return true;}}catch(e){} return false;
+}
+async function signOut(){try{await fetch(AUTH+'/logout',{method:'POST',headers:authHeaders()});}catch(e){} clearInterval(pollTimer); clearSession(); location.reload();}
+
+// ---- local cache (per account) ----
+function lsKey(){return KEY+'.data.'+(session?session.user.id:'anon');}
 function loadLocal(){try{const s=JSON.parse(localStorage.getItem(lsKey()));if(s&&s.__budget)return s;}catch(e){}return null;}
 function saveLocal(){localStorage.setItem(lsKey(),JSON.stringify(state));}
-function save(){saveLocal();scheduleCloudPush();}
-
-function newId(){return 'b_'+Date.now().toString(36)+Math.random().toString(36).slice(2,10);}
-function resolveBudgetId(){
-  const m=location.hash.match(/b=([\w-]+)/);
-  if(m){budgetId=m[1];return;}                      // opened a shared link
-  budgetId=localStorage.getItem('budgetApp.lastId'); // my own returning budget
-  if(!budgetId){budgetId=newId();freshId=true;}
-  localStorage.setItem('budgetApp.lastId',budgetId);
-  history.replaceState(null,'',location.pathname+location.search+'#b='+budgetId);
-}
+function save(){saveLocal();scheduleCloudSave();}
 
 // ---- sync status dot ----
 function setStatus(s){
   const el=$('#syncStatus'); if(!el)return;
-  const map={synced:['#34d399','Synced — shared live'],saving:['#fbbf24','Saving…'],
+  const map={synced:['#34d399','Synced to your account'],saving:['#fbbf24','Saving…'],
     offline:['#f87171','Offline — saved on this device only'],local:['#94a3b8','Local only']};
   el.style.color=map[s][0]; el.title=map[s][1];
 }
 
-// ---- supabase REST ----
-async function cloudGet(){
+// ---- per-account data (RLS: each user only sees their own row) ----
+async function cloudGet(retry){
+  if(!session) return undefined;
   try{
-    const r=await fetch(SUPA_URL+'/rest/v1/budgets?id=eq.'+encodeURIComponent(budgetId)+'&select=data,updated_at',{headers:SHEAD});
+    const r=await fetch(REST+'/budgets?user_id=eq.'+session.user.id+'&select=data,updated_at',{headers:authHeaders()});
+    if(r.status===401 && !retry){ return (await authRefresh()) ? cloudGet(true) : undefined; }
     if(!r.ok)throw 0; const rows=await r.json(); return rows[0]||null;
-  }catch(e){return undefined;} // undefined = network/error
+  }catch(e){return undefined;}
 }
-async function cloudPush(){
-  setStatus('saving');
-  const ts=new Date().toISOString();
+async function cloudSave(retry){
+  if(!session) return;
+  setStatus('saving'); const ts=new Date().toISOString();
   try{
-    const r=await fetch(SUPA_URL+'/rest/v1/budgets?on_conflict=id',{
-      method:'POST',headers:{...SHEAD,'Prefer':'resolution=merge-duplicates,return=minimal'},
-      body:JSON.stringify({id:budgetId,data:state,updated_at:ts})});
+    const r=await fetch(REST+'/budgets?on_conflict=user_id',{
+      method:'POST',headers:{...authHeaders(),'Prefer':'resolution=merge-duplicates,return=minimal'},
+      body:JSON.stringify({user_id:session.user.id,data:state,updated_at:ts})});
+    if(r.status===401 && !retry){ if(await authRefresh()) return cloudSave(true); setStatus('offline'); return; }
     if(!r.ok)throw 0; serverTs=new Date(ts).getTime(); setStatus('synced');
   }catch(e){setStatus('offline');}
 }
-function scheduleCloudPush(){clearTimeout(pushTimer);pushTimer=setTimeout(cloudPush,700);}
+function scheduleCloudSave(){clearTimeout(pushTimer);pushTimer=setTimeout(()=>cloudSave(),700);}
 function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput'))||a.id==='startBal'||a.id==='debtAllowance'||(a.closest&&a.closest('.modal-bg.show')));}
 async function cloudPoll(){
+  if(!session) return;
   const row=await cloudGet();
   if(row===undefined){setStatus('offline');return;}
   setStatus('synced');
@@ -400,9 +434,8 @@ async function startSync(){
   if(row===undefined){setStatus('offline');}
   else if(row && row.data && row.data.__budget){
     state=row.data; serverTs=new Date(row.updated_at).getTime(); saveLocal(); render(); setStatus('synced');
-  }else{ await cloudPush(); } // no row yet — create it
+  }else{ await cloudSave(); } // first time on this account — create the row
   clearInterval(pollTimer); pollTimer=setInterval(cloudPoll,7000);
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden)cloudPoll();});
 }
 function mkey(y,m){return y+'-'+String(m+1).padStart(2,'0');}
 function uid(){return Math.random().toString(36).slice(2,9);}
@@ -719,12 +752,6 @@ function renderItems(){
   });
 }
 
-// ---- share (live link — everyone edits the same budget) ----
-$('#shareBtn').onclick=()=>{
-  const url=location.origin+location.pathname+'#b='+budgetId;
-  navigator.clipboard.writeText(url).then(()=>toast('Live link copied! Anyone who opens it sees & edits this budget.'),
-    ()=>{$('#ioText').value=url;$('#ioModal').classList.add('show');});
-};
 
 // ---- backup/restore ----
 $('#ioBtn').onclick=()=>{$('#ioText').value=JSON.stringify(state,null,2);$('#ioModal').classList.add('show');};
@@ -1100,39 +1127,74 @@ $('#addDebt').onclick=()=>{
   save(); renderDebts();
 };
 
-// init
-(function(){
-  resolveBudgetId();
-  const local=loadLocal(); if(local) state=local;
+// example data for a brand-new account
+function seedState(){
+  const now=new Date();
+  state.recurring=[
+    {id:uid(),name:'Paycheck',amount:2000,type:'income',freq:'biweekly',anchor:'2026-06-05'},
+    {id:uid(),name:'Rent',amount:1500,type:'expense',freq:'monthly',day:1},
+    {id:uid(),name:'Car Payment',amount:400,type:'expense',freq:'monthly',day:5},
+    {id:uid(),name:'Electric',amount:120,type:'expense',freq:'monthly',day:10},
+    {id:uid(),name:'Internet',amount:80,type:'expense',freq:'monthly',day:20},
+    {id:uid(),name:'Groceries',amount:150,type:'expense',freq:'biweekly',anchor:'2026-06-06'},
+    {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
+  ];
+  state.debts=[
+    {id:uid(),name:'Credit Card',type:'card',starting:5000,current:3200,min:60,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
+    {id:uid(),name:'Car Loan',type:'auto',starting:18000,current:11500,min:400,apr:6.5,promoEnd:'',priority:'medium'},
+    {id:uid(),name:'Student Loan',type:'personal',starting:12000,current:9800,min:180,apr:4.5,promoEnd:'',priority:'low'},
+  ];
+  state.debtAllowance=1000;
+  state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
+}
+
+let appStarted=false;
+function enterApp(){
+  $('#authOverlay').classList.remove('show');
+  $('#acctEmail').textContent=(session&&session.user&&session.user.email)||'';
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
-  // seed examples only for a brand-new budget (not when opening someone's shared link)
-  if(freshId && !local){
-    state.recurring=[
-      {id:uid(),name:'Paycheck',amount:2000,type:'income',freq:'biweekly',anchor:'2026-06-05'},
-      {id:uid(),name:'Rent',amount:1500,type:'expense',freq:'monthly',day:1},
-      {id:uid(),name:'Car Payment',amount:400,type:'expense',freq:'monthly',day:5},
-      {id:uid(),name:'Electric',amount:120,type:'expense',freq:'monthly',day:10},
-      {id:uid(),name:'Internet',amount:80,type:'expense',freq:'monthly',day:20},
-      {id:uid(),name:'Groceries',amount:150,type:'expense',freq:'biweekly',anchor:'2026-06-06'},
-      {id:uid(),name:'Gas',amount:50,type:'expense',freq:'weekly',weekday:5},
-    ];
-    state.debts=[
-      {id:uid(),name:'Credit Card',type:'card',starting:5000,current:3200,min:60,apr:19.99,promoEnd:'2026-12-01',priority:'high'},
-      {id:uid(),name:'Car Loan',type:'auto',starting:18000,current:11500,min:400,apr:6.5,promoEnd:'',priority:'medium'},
-      {id:uid(),name:'Student Loan',type:'personal',starting:12000,current:9800,min:180,apr:4.5,promoEnd:'',priority:'low'},
-    ];
-    state.debtAllowance=1000;
-    state.startBal[mkey(now.getFullYear(),now.getMonth())]=2500; // anchor; future months auto-carry
-    saveLocal();
-  }
+  const local=loadLocal();
+  if(local){ state=local; }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:''}; seedState(); saveLocal(); }
   render();
-  setupDnD();
-  setupDebtDnD();
-  setupAllowance();
+  if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
   startSync();
-  // reliably land on today once layout has settled (and again after full load)
   setTimeout(scrollToToday,250);
   window.addEventListener('load',()=>setTimeout(scrollToToday,120),{once:true});
+}
+function showLogin(){ $('#authOverlay').classList.add('show'); }
+
+// ---- auth UI ----
+function authMsg(t,err){const e=$('#authMsg');e.textContent=t;e.style.color=err?'var(--bad)':'var(--muted)';}
+$('#signOutBtn').onclick=signOut;
+$('#authSignIn').onclick=async()=>{
+  const email=$('#authEmail').value.trim(), pw=$('#authPw').value;
+  if(!email||!pw){authMsg('Enter your email and password.',true);return;}
+  authMsg('Signing in…');
+  const r=await authSignIn(email,pw);
+  if(r&&r.access_token){saveSession(r);enterApp();}
+  else authMsg((r&&(r.error_description||r.msg||r.error))||'Sign-in failed.',true);
+};
+$('#authSignUp').onclick=async()=>{
+  const email=$('#authEmail').value.trim(), pw=$('#authPw').value;
+  if(!email||pw.length<6){authMsg('Enter an email and a password of at least 6 characters.',true);return;}
+  authMsg('Creating account…');
+  const r=await authSignUp(email,pw);
+  if(r&&r.access_token){saveSession(r);enterApp();}
+  else if(r&&(r.id||r.user||r.email||r.confirmation_sent_at!==undefined)){authMsg('Account created — check your email to confirm, then sign in.');}
+  else authMsg((r&&(r.error_description||r.msg||r.error))||'Sign-up failed.',true);
+};
+$('#authForgot').onclick=async()=>{
+  const email=$('#authEmail').value.trim(); if(!email){authMsg('Enter your email first.',true);return;}
+  await authRecover(email); authMsg('If that account exists, a password-reset email is on its way.');
+};
+$('#authPw').onkeydown=e=>{if(e.key==='Enter')$('#authSignIn').click();};
+
+// ---- boot ----
+(function(){
+  try{const raw=localStorage.getItem(KEY+'.session'); if(raw)session=JSON.parse(raw);}catch(e){}
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden && session)cloudPoll();});
+  if(session && session.access_token) enterApp(); else showLogin();
 })();
 </script>
 </body>
