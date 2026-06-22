@@ -267,7 +267,7 @@
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="hint">Tip: <b>Actual</b> starts equal to Planned — edit any Actual to what really happened and every balance below re-adjusts. Or <b>click an Actual Balance</b> to reconcile: type your real bank balance on that day and the app inserts a balancing adjustment so totals match. Clear a cell to undo. Recurring items repeat every month automatically. <b>Drag the ⠿ handle</b> on any row onto another day to change that item's date.</div>
+  <div class="hint">Tip: the recurring amounts are <b>estimates</b>. Edit the <b>Actual</b> cell to dial in the exact amount — this updates <b>both</b> the Planned and Actual lines for that month, so every balance below re-adjusts. Clear a cell to snap back to the estimate. To reconcile to reality, <b>click an Actual Balance</b> and type your real bank balance (inserts a balancing adjustment). Recurring items repeat monthly. <b>Drag the ⠿ handle</b> on any row onto another day to change its date.</div>
   </div><!-- /budgetView -->
 
   <div id="debtsView" style="display:none">
@@ -505,17 +505,19 @@ function render(){
       const first=idx===0;
       let planCell='',actCell='',typeCell='';
       if(it){
-        const amt=Number(it.amount)||0;
         const isInc=it.type==='income';
+        const est=Number(it.amount)||0;               // recurring estimate (the "allowance")
+        const av=acts[it.key];
+        const hasA=av!==undefined&&av!==''&&av!==null;
+        const amt=hasA?(Number(av)||0):est;           // dialed-in amount drives BOTH plan and actual
+        // planned
         if(isInc){pIn+=amt;pBal+=amt;}else{pOut+=amt;pBal-=amt;}
         planCell=`<span class="${isInc?'amt-in':'amt-out'}">${isInc?'+':'−'}${fmt(amt).replace('-','')}</span>`;
         typeCell=`<span class="pill ${isInc?'income':'expense'}">${isInc?'Income':'Expense'}</span>`;
-        const av=acts[it.key];
-        const hasA=av!==undefined&&av!==''&&av!==null;
-        const eff=hasA?(Number(av)||0):amt;   // actual starts equal to planned until edited
-        if(isInc){aIn+=eff;aBal+=eff;}else{aOut+=eff;aBal-=eff;}
+        // actual = same dialed-in amount
+        if(isInc){aIn+=amt;aBal+=amt;}else{aOut+=amt;aBal-=amt;}
         actCell=`<input class="actual${hasA?' edited':''}" data-key="${it.key}" type="number" step="0.01"
-          value="${hasA?av:amt.toFixed(2)}" title="${hasA?'Edited — differs from planned':'Same as planned'}">`;
+          value="${amt.toFixed(2)}" title="${hasA?'Dialed-in amount — overrides the estimate for this month':'Estimate — edit to dial in the exact amount (updates plan + actual)'}">`;
       }else{
         planCell='<span class="empty">—</span>';
       }
