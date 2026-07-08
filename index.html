@@ -182,6 +182,24 @@
   #schedTbl tr.totalrow td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;border-top:2px solid var(--accent)}
   #schedTbl tr.totalrow td:first-child{z-index:2}
   .sched-int{color:var(--expense)}
+  /* overview */
+  #ovTbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;white-space:nowrap;overflow:visible;min-width:640px}
+  #ovTbl th,#ovTbl td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  #ovTbl th{position:sticky;top:0;background:var(--panel2);color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;z-index:1}
+  #ovTbl th.l,#ovTbl td.l{text-align:left}
+  #ovTbl th:first-child,#ovTbl td:first-child{position:sticky;left:0;background:var(--panel);z-index:1;box-shadow:1px 0 0 var(--line)}
+  #ovTbl thead th:first-child{background:var(--panel2);z-index:2}
+  .goal{padding:12px 0;border-bottom:1px solid var(--line)}
+  .goal-row{display:flex;align-items:center;gap:10px}
+  .gname{flex:1;background:var(--panel2);border:1px solid transparent;color:var(--txt);padding:6px 8px;border-radius:6px;font-size:14px;font-weight:600}
+  .gname:hover{border-color:var(--line)} .gname:focus{outline:none;border-color:var(--accent)}
+  .goal-eta{color:var(--muted);font-size:12px;white-space:nowrap}
+  .goal-bar{height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:8px 0}
+  .goal-fill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
+  .goal-nums{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;flex-wrap:wrap}
+  .goal-nums input{width:100px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:5px 7px;border-radius:6px;text-align:right;font-size:13px}
+  .goal-nums input:focus{outline:none;border-color:var(--accent)}
+  .goal-pct{margin-left:auto;font-weight:700;color:var(--income)}
   .paidlabel{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
   .paidchk{cursor:pointer;accent-color:#34d399;width:15px;height:15px}
   #schedTbl tr.paid td:not(:first-child){opacity:.45;text-decoration:line-through}
@@ -239,6 +257,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="budget">📅 Budget</button>
     <button class="tab" data-tab="debts">💳 Debts</button>
+    <button class="tab" data-tab="overview">📊 Overview</button>
   </div>
   <div class="spacer"></div>
   <button class="btn" id="manageBtn">＋ Manage items</button>
@@ -280,6 +299,10 @@
       <input class="money" id="debtAllowance" type="number" step="0.01" placeholder="0.00">
       <span id="allowanceNote"></span>
     </div>
+    <div class="allowance-bar" style="margin-top:-6px">
+      <label class="paidlabel"><input type="checkbox" id="debtInBudget"> Show these payments as an expense in my monthly budget</label>
+      <span style="color:var(--muted);font-size:12px">on day <input class="money" id="debtDay" type="number" min="1" max="28" style="width:56px" value="1"></span>
+    </div>
     <div class="debts-main">
       <table id="debtTbl">
         <thead><tr>
@@ -313,6 +336,27 @@
       <div id="planPanel" class="plan-panel"></div>
     </div>
     <div id="schedulePanel" class="plan-panel"></div>
+  </div>
+
+  <div id="overviewView" style="display:none">
+    <div class="cards" id="ovCards"></div>
+    <div class="plan-panel" style="margin-top:16px">
+      <div class="plan-title">📈 Net worth outlook (next 12 months)</div>
+      <div class="plan-summary" id="ovChartNote"></div>
+      <div id="ovChart"></div>
+      <div class="sched-wrap" style="max-height:360px;margin-top:12px"><table id="ovTbl"></table></div>
+    </div>
+    <div class="plan-panel" style="margin-top:16px">
+      <div class="plan-title">🎯 Savings goals &amp; sinking funds</div>
+      <div class="plan-summary">Track an emergency fund or any goal. “Months to fund” uses your average monthly surplus (income − expenses).</div>
+      <div id="goalsList"></div>
+      <div class="formrow" style="margin-top:10px;grid-template-columns:1.4fr .9fr .9fr auto">
+        <div class="f"><label>Goal name</label><input id="goalName" placeholder="Emergency fund"></div>
+        <div class="f"><label>Target ($)</label><input id="goalTarget" type="number" step="0.01" placeholder="10000"></div>
+        <div class="f"><label>Saved so far ($)</label><input id="goalSaved" type="number" step="0.01" placeholder="0"></div>
+        <div class="f"><button class="btn" id="addGoal">Add</button></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -369,7 +413,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, debtInBudget:true, debtDay:1, goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
@@ -471,12 +515,36 @@ function itemsForMonth(y,m){
   return rec.concat(one);
 }
 
+// memoized payoff plan (recomputed only when debts/allowance change) so the budget can read it cheaply
+let _planCache=null,_planSig='__none__';
+function getPlan(){
+  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance});
+  if(sig!==_planSig){_planSig=sig;_planCache=buildPlan();}
+  return _planCache;
+}
+// synthetic "Debt payments" expense for a month, sourced from the payoff plan (one source of truth)
+function debtPayItem(y,m){
+  if(state.debtInBudget===false) return null;
+  const plan=getPlan();
+  if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin) return null;
+  const sch=plan.schedule.find(r=>r.mk===mkey(y,m));
+  if(!sch) return null;
+  const total=Object.values(sch.pay).reduce((a,b)=>a+b,0);
+  if(total<=0.005) return null;
+  const day=Math.min(Math.max(1,Number(state.debtDay)||1),daysIn(y,m));
+  return {id:'__debt',name:'Debt payments',type:'expense',amount:total,day,synthetic:true,key:'__debt'};
+}
+function itemsForMonthFull(y,m){
+  const list=itemsForMonth(y,m); const dp=debtPayItem(y,m);
+  return dp?list.concat([dp]):list;
+}
+
 function daysIn(y,m){return new Date(y,m+1,0).getDate();}
 
 function render(){
   $('#monthLabel').textContent=MONTHS[cur.m]+' '+cur.y;
   const k=mkey(cur.y,cur.m);
-  const items=itemsForMonth(cur.y,cur.m);
+  const items=itemsForMonthFull(cur.y,cur.m);
   const acts=state.actuals[k]||{};
   const recon=(state.recon&&state.recon[k])||{};
   const src=carrySource(cur.y,cur.m);
@@ -511,7 +579,7 @@ function render(){
       if(it){
         const isInc=it.type==='income';
         const est=Number(it.amount)||0;               // recurring estimate (the "allowance")
-        const av=acts[it.key];
+        const av=it.synthetic?undefined:acts[it.key];
         const hasA=av!==undefined&&av!==''&&av!==null;
         const amt=hasA?(Number(av)||0):est;           // dialed-in amount drives BOTH plan and actual
         // planned
@@ -520,8 +588,10 @@ function render(){
         typeCell=`<span class="pill ${isInc?'income':'expense'}">${isInc?'Income':'Expense'}</span>`;
         // actual = same dialed-in amount
         if(isInc){aIn+=amt;aBal+=amt;}else{aOut+=amt;aBal-=amt;}
-        actCell=`<input class="actual${hasA?' edited':''}" data-key="${it.key}" type="number" step="0.01"
-          value="${amt.toFixed(2)}" title="${hasA?'Dialed-in amount — overrides the estimate for this month':'Estimate — edit to dial in the exact amount (updates plan + actual)'}">`;
+        actCell=it.synthetic
+          ? `<span class="${isInc?'amt-in':'amt-out'}" title="Auto-filled from your debt payoff plan">${isInc?'+':'−'}${fmt(amt).replace('-','')}</span>`
+          : `<input class="actual${hasA?' edited':''}" data-key="${it.key}" type="number" step="0.01"
+              value="${amt.toFixed(2)}" title="${hasA?'Dialed-in amount — overrides the estimate for this month':'Estimate — edit to dial in the exact amount (updates plan + actual)'}">`;
       }else{
         planCell='<span class="empty">—</span>';
       }
@@ -533,11 +603,15 @@ function render(){
       const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
       const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
       const isToday=isCurMonth&&d===todayD;
-      const dragAttrs= it ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
+      const dragAttrs= (it && !it.synthetic) ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
+      const nameCell = it
+        ? (it.synthetic ? '💳 ' : '<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> ')
+          + esc(it.name) + (it.recurring?' <span class="tag">↻</span>':'')
+        : '<span class="empty">no activity</span>';
       html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}" data-day="${d}"${dragAttrs}>
         <td class="l">${first?MONTHS[cur.m].slice(0,3)+' '+d+(isToday?' <span class="todaybadge">TODAY</span>':''):''}</td>
         <td class="c" style="color:var(--muted)">${first?dow:''}</td>
-        <td class="l">${it?'<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> '+it.name+(it.recurring?' <span class="tag">↻</span>':''):'<span class="empty">no activity</span>'}</td>
+        <td class="l">${nameCell}</td>
         <td class="c">${typeCell}</td>
         <td>${planCell}</td>
         <td>${actCell}</td>
@@ -612,7 +686,7 @@ $('#startBal').onchange=e=>{
 // ---- starting-balance carry-over ----
 const CARRY_LOOKBACK=36; // months to search back for an explicit anchor balance
 function monthActualEnd(y,m,startVal){
-  const k=mkey(y,m), items=itemsForMonth(y,m);
+  const k=mkey(y,m), items=itemsForMonthFull(y,m);
   const acts=state.actuals[k]||{}, recon=(state.recon&&state.recon[k])||{};
   const byDay={}; items.forEach(it=>{const d=Math.min(Math.max(1,+it.day||1),daysIn(y,m));(byDay[d]=byDay[d]||[]).push(it);});
   let aBal=startVal, N=daysIn(y,m);
@@ -857,16 +931,25 @@ function setupDebtDnD(){
 // allowance input: bind once; live-update without clobbering what you're typing
 function setupAllowance(){
   const el=$('#debtAllowance'); let t;
-  el.oninput=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); saveLocal(); scheduleCloudPush(); clearTimeout(t); t=setTimeout(renderDebts,300); };
+  el.oninput=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); saveLocal(); scheduleCloudSave(); clearTimeout(t); t=setTimeout(renderDebts,300); };
   el.onchange=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); save(); renderDebts(); };
+  const chk=$('#debtInBudget');
+  chk.checked=state.debtInBudget!==false;
+  chk.onchange=()=>{ state.debtInBudget=chk.checked; save(); render(); renderDebts(); };
+  const dd=$('#debtDay');
+  dd.value=Number(state.debtDay)||1;
+  dd.onchange=()=>{ state.debtDay=Math.min(Math.max(1,Number(dd.value)||1),28); dd.value=state.debtDay; save(); render(); };
 }
 // ---- debts tab ----
 function setTab(t){
   document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===t));
   $('#budgetView').style.display=t==='budget'?'':'none';
   $('#debtsView').style.display=t==='debts'?'':'none';
+  $('#overviewView').style.display=t==='overview'?'':'none';
   $('#manageBtn').style.display=t==='budget'?'':'none';
-  if(t==='debts')renderDebts(); else setTimeout(scrollToToday,60);
+  if(t==='debts') renderDebts();
+  else if(t==='overview') renderOverview();
+  else { render(); setTimeout(scrollToToday,60); }
 }
 document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
@@ -914,7 +997,7 @@ function simulatePlan(strat){
     // 3) any leftover -> current-rate avalanche (also the whole 'avalanche' strategy)
     live().slice().sort((a,b)=>monthlyRate(b,date)-monthlyRate(a,date)||a.bal-b.bal).forEach(d=>{ if(pool>0.005){const e=Math.min(pool,d.bal); d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
     if(month===0) res.payNow={...pay};
-    res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), mk:mkey(date.getFullYear(),date.getMonth()), pay:{...pay}, interest:{...mInt}});
+    res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), mk:mkey(date.getFullYear(),date.getMonth()), pay:{...pay}, interest:{...mInt}, debtRemaining:work.reduce((a,d)=>a+d.bal,0)});
     work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
     const after=live().reduce((a,d)=>a+d.bal,0);
     month++;
@@ -1022,7 +1105,7 @@ function renderDebts(){
   const _ae=$('#debtAllowance');
   if(document.activeElement!==_ae) _ae.value=(state.debtAllowance===''||state.debtAllowance==null)?'':state.debtAllowance;
 
-  const plan=buildPlan();
+  const plan=getPlan();
   document.querySelectorAll('#debtTbl th.sortable').forEach(th=>{
     const c=th.dataset.sort;
     th.querySelector('.si').textContent = debtSort.col===c ? (debtSort.dir>0?' ▲':' ▼') : '';
@@ -1147,6 +1230,82 @@ $('#addDebt').onclick=()=>{
   save(); renderDebts();
 };
 
+// ---- overview tab ----
+function debtPayForMonth(mk){ const plan=getPlan(); if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin)return 0; const s=plan.schedule.find(r=>r.mk===mk); return s?Object.values(s.pay).reduce((a,b)=>a+b,0):0; }
+function debtRemainingForMonth(mk){ const plan=getPlan(); const cur=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0); if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin)return cur; const s=plan.schedule.find(r=>r.mk===mk); return s?s.debtRemaining:cur; }
+function nwChart(proj){
+  const W=640,Hh=150,pad=28; const vals=proj.map(p=>p.nw);
+  let mn=Math.min(...vals,0), mx=Math.max(...vals,0); if(mx===mn)mx=mn+1;
+  const x=i=>pad+i*(W-2*pad)/(Math.max(1,proj.length-1));
+  const yv=v=>Hh-pad-((v-mn)/(mx-mn))*(Hh-2*pad);
+  const pts=proj.map((p,i)=>x(i).toFixed(1)+','+yv(p.nw).toFixed(1)).join(' ');
+  const zero=yv(0).toFixed(1);
+  const dots=proj.map((p,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${yv(p.nw).toFixed(1)}" r="2.5" fill="var(--accent)"/>`).join('');
+  const labels=proj.map((p,i)=> i%2===0?`<text x="${x(i).toFixed(1)}" y="${Hh-6}" font-size="9" fill="var(--muted)" text-anchor="middle">${p.label}</text>`:'').join('');
+  return `<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:680px">
+    <line x1="${pad}" y1="${zero}" x2="${W-pad}" y2="${zero}" stroke="var(--line)" stroke-dasharray="3 3"/>
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>${dots}${labels}</svg>`;
+}
+function renderOverview(){
+  const now=new Date(); const N=12;
+  let bank=startBalanceFor(now.getFullYear(),now.getMonth());
+  const bankNow=bank, debtNow=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0);
+  let y=now.getFullYear(), m=now.getMonth(), netSum=0, proj=[];
+  for(let i=0;i<N;i++){
+    const mk=mkey(y,m), acts=state.actuals[mk]||{}; let inc=0,exp=0;
+    itemsForMonth(y,m).forEach(it=>{ const av=acts[it.key]; const has=av!==undefined&&av!==''; const a=has?(Number(av)||0):(Number(it.amount)||0); if(it.type==='income')inc+=a; else exp+=a; });
+    const dp=debtPayForMonth(mk); const surplus=inc-exp-dp; netSum+=surplus; bank+=surplus;
+    const debtRem=debtRemainingForMonth(mk); proj.push({label:MONTHS[m].slice(0,3)+" '"+String(y).slice(2),inc,exp,dp,surplus,bank,debtRem,nw:bank-debtRem});
+    m++; if(m>11){m=0;y++;}
+  }
+  const avgNet=netSum/N, nwNow=bankNow-debtNow, nwEnd=proj[proj.length-1].nw;
+  $('#ovCards').innerHTML=[
+    ['Net worth now',fmt(nwNow),nwNow>=0?'var(--good)':'var(--bad)'],
+    ['Bank balance now',fmt(bankNow),'var(--txt)'],
+    ['Total debt now',fmt(debtNow),'var(--expense)'],
+    ['Avg monthly surplus',fmt(avgNet),avgNet>=0?'var(--good)':'var(--bad)'],
+  ].map(c=>`<div class="card"><div class="lbl">${c[0]}</div><div class="val" style="color:${c[2]}">${c[1]}</div></div>`).join('');
+  $('#ovChart').innerHTML=nwChart(proj);
+  $('#ovChartNote').innerHTML=`Projected net worth in 12 months: <b style="color:${nwEnd>=nwNow?'var(--income)':'var(--expense)'}">${fmt(nwEnd)}</b> (${nwEnd-nwNow>=0?'+':''}${fmt(nwEnd-nwNow)}). Assumes debt payments come out of your account.`;
+  const th='<thead><tr><th class="l">Month</th><th>Income</th><th>Expenses</th><th>Debt pmt</th><th>Surplus</th><th>Bank</th><th>Debt</th><th>Net worth</th></tr></thead>';
+  const body=proj.map(r=>`<tr><td class="l">${r.label}</td><td>${fmt(r.inc)}</td><td>${fmt(r.exp)}</td><td>${fmt(r.dp)}</td><td class="${r.surplus>=0?'pos':'neg'}">${fmt(r.surplus)}</td><td>${fmt(r.bank)}</td><td>${fmt(r.debtRem)}</td><td class="${r.nw>=0?'pos':'neg'}" style="font-weight:700">${fmt(r.nw)}</td></tr>`).join('');
+  $('#ovTbl').innerHTML=th+'<tbody>'+body+'</tbody>';
+  renderGoals(avgNet);
+}
+function renderGoals(avgNet){
+  state.goals=state.goals||[];
+  const el=$('#goalsList');
+  if(!state.goals.length){ el.innerHTML='<div class="empty" style="padding:6px 0">No goals yet — add one below.</div>'; return; }
+  el.innerHTML=state.goals.map(g=>{
+    const target=Number(g.target)||0, saved=Number(g.saved)||0;
+    const pct=target>0?Math.max(0,Math.min(100,saved/target*100)):0, remaining=Math.max(0,target-saved);
+    const months=(avgNet>0&&remaining>0)?Math.ceil(remaining/avgNet):(remaining<=0?0:null);
+    const eta=remaining<=0?'✓ fully funded':(months!=null?months+' mo at current surplus':'needs a positive surplus');
+    return `<div class="goal">
+      <div class="goal-row">
+        <input class="gname debtinput" data-id="${g.id}" data-f="name" value="${esc(g.name||'')}" placeholder="Goal">
+        <span class="goal-eta">${eta}</span>
+        <button class="del" data-delgoal="${g.id}" title="Delete">🗑</button>
+      </div>
+      <div class="goal-bar"><div class="goal-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="goal-nums">
+        <label>Saved <input class="gnum debtinput" data-id="${g.id}" data-f="saved" type="number" step="0.01" value="${saved}"></label>
+        <span>of</span>
+        <label>Target <input class="gnum debtinput" data-id="${g.id}" data-f="target" type="number" step="0.01" value="${target}"></label>
+        <span class="goal-pct">${pct.toFixed(0)}%</span>
+      </div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.gname,.gnum').forEach(inp=>{ inp.onchange=()=>{ const g=state.goals.find(x=>x.id===inp.dataset.id); if(g){ g[inp.dataset.f]= inp.dataset.f==='name'?inp.value:(inp.value===''?'':Number(inp.value)); save(); renderOverview(); } }; });
+  el.querySelectorAll('[data-delgoal]').forEach(b=>{ b.onclick=()=>{ state.goals=state.goals.filter(x=>x.id!==b.dataset.delgoal); save(); renderOverview(); }; });
+}
+$('#addGoal').onclick=()=>{
+  const name=$('#goalName').value.trim()||'Goal', target=Number($('#goalTarget').value)||0, saved=Number($('#goalSaved').value)||0;
+  state.goals=state.goals||[]; state.goals.push({id:uid(),name,target,saved});
+  $('#goalName').value='';$('#goalTarget').value='';$('#goalSaved').value='';
+  save(); renderOverview();
+};
+
 // example data for a brand-new account
 function seedState(){
   const now=new Date();
@@ -1175,7 +1334,7 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{}}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},debtInBudget:true,debtDay:1,goals:[]}; seedState(); saveLocal(); }
   render();
   if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
   startSync();
