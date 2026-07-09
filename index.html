@@ -523,20 +523,20 @@ function getPlan(){
   return _planCache;
 }
 // synthetic "Debt payments" expense for a month, sourced from the payoff plan (one source of truth)
-function debtPayItem(y,m){
-  if(state.debtInBudget===false) return null;
+function debtPayItems(y,m){
+  if(state.debtInBudget===false) return [];
   const plan=getPlan();
-  if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin) return null;
+  if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin) return [];
   const sch=plan.schedule.find(r=>r.mk===mkey(y,m));
-  if(!sch) return null;
-  const total=Object.values(sch.pay).reduce((a,b)=>a+b,0);
-  if(total<=0.005) return null;
+  if(!sch) return [];
   const day=Math.min(Math.max(1,Number(state.debtDay)||1),daysIn(y,m));
-  return {id:'__debt',name:'Debt payments',type:'expense',amount:total,day,synthetic:true,key:'__debt'};
+  return state.debts.filter(d=>(sch.pay[d.id]||0)>0.005).map(d=>({
+    id:'__debt_'+d.id, name:(d.name||'Debt')+' payment', type:'expense',
+    amount:sch.pay[d.id], day, synthetic:true, key:'__debt_'+d.id
+  }));
 }
 function itemsForMonthFull(y,m){
-  const list=itemsForMonth(y,m); const dp=debtPayItem(y,m);
-  return dp?list.concat([dp]):list;
+  return itemsForMonth(y,m).concat(debtPayItems(y,m));
 }
 
 function daysIn(y,m){return new Date(y,m+1,0).getDate();}
