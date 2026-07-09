@@ -299,10 +299,6 @@
       <input class="money" id="debtAllowance" type="number" step="0.01" placeholder="0.00">
       <span id="allowanceNote"></span>
     </div>
-    <div class="allowance-bar" style="margin-top:-6px">
-      <label class="paidlabel"><input type="checkbox" id="debtInBudget"> Show these payments as an expense in my monthly budget</label>
-      <span style="color:var(--muted);font-size:12px">on day <input class="money" id="debtDay" type="number" min="1" max="28" style="width:56px" value="1"></span>
-    </div>
     <div class="debts-main">
       <table id="debtTbl">
         <thead><tr>
@@ -413,7 +409,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, debtInBudget:true, debtDay:1, goals:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
@@ -522,29 +518,12 @@ function getPlan(){
   if(sig!==_planSig){_planSig=sig;_planCache=buildPlan();}
   return _planCache;
 }
-// synthetic "Debt payments" expense for a month, sourced from the payoff plan (one source of truth)
-function debtPayItems(y,m){
-  if(state.debtInBudget===false) return [];
-  const plan=getPlan();
-  if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin) return [];
-  const sch=plan.schedule.find(r=>r.mk===mkey(y,m));
-  if(!sch) return [];
-  const day=Math.min(Math.max(1,Number(state.debtDay)||1),daysIn(y,m));
-  return state.debts.filter(d=>(sch.pay[d.id]||0)>0.005).map(d=>({
-    id:'__debt_'+d.id, name:(d.name||'Debt')+' payment', type:'expense',
-    amount:sch.pay[d.id], day, synthetic:true, key:'__debt_'+d.id
-  }));
-}
-function itemsForMonthFull(y,m){
-  return itemsForMonth(y,m).concat(debtPayItems(y,m));
-}
-
 function daysIn(y,m){return new Date(y,m+1,0).getDate();}
 
 function render(){
   $('#monthLabel').textContent=MONTHS[cur.m]+' '+cur.y;
   const k=mkey(cur.y,cur.m);
-  const items=itemsForMonthFull(cur.y,cur.m);
+  const items=itemsForMonth(cur.y,cur.m);
   const acts=state.actuals[k]||{};
   const recon=(state.recon&&state.recon[k])||{};
   const src=carrySource(cur.y,cur.m);
@@ -579,7 +558,7 @@ function render(){
       if(it){
         const isInc=it.type==='income';
         const est=Number(it.amount)||0;               // recurring estimate (the "allowance")
-        const av=it.synthetic?undefined:acts[it.key];
+        const av=acts[it.key];
         const hasA=av!==undefined&&av!==''&&av!==null;
         const amt=hasA?(Number(av)||0):est;           // dialed-in amount drives BOTH plan and actual
         // planned
@@ -588,10 +567,8 @@ function render(){
         typeCell=`<span class="pill ${isInc?'income':'expense'}">${isInc?'Income':'Expense'}</span>`;
         // actual = same dialed-in amount
         if(isInc){aIn+=amt;aBal+=amt;}else{aOut+=amt;aBal-=amt;}
-        actCell=it.synthetic
-          ? `<span class="${isInc?'amt-in':'amt-out'}" title="Auto-filled from your debt payoff plan">${isInc?'+':'−'}${fmt(amt).replace('-','')}</span>`
-          : `<input class="actual${hasA?' edited':''}" data-key="${it.key}" type="number" step="0.01"
-              value="${amt.toFixed(2)}" title="${hasA?'Dialed-in amount — overrides the estimate for this month':'Estimate — edit to dial in the exact amount (updates plan + actual)'}">`;
+        actCell=`<input class="actual${hasA?' edited':''}" data-key="${it.key}" type="number" step="0.01"
+          value="${amt.toFixed(2)}" title="${hasA?'Dialed-in amount — overrides the estimate for this month':'Estimate — edit to dial in the exact amount (updates plan + actual)'}">`;
       }else{
         planCell='<span class="empty">—</span>';
       }
@@ -603,9 +580,9 @@ function render(){
       const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
       const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
       const isToday=isCurMonth&&d===todayD;
-      const dragAttrs= (it && !it.synthetic) ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
+      const dragAttrs= it ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
       const nameCell = it
-        ? (it.synthetic ? '💳 ' : '<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> ')
+        ? '<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> '
           + esc(it.name) + (it.recurring?' <span class="tag">↻</span>':'')
         : '<span class="empty">no activity</span>';
       html+=`<tr class="${wknd?'weekend':''} ${first?'dayfirst':''} ${isToday?'today':''}" data-day="${d}"${dragAttrs}>
@@ -686,7 +663,7 @@ $('#startBal').onchange=e=>{
 // ---- starting-balance carry-over ----
 const CARRY_LOOKBACK=36; // months to search back for an explicit anchor balance
 function monthActualEnd(y,m,startVal){
-  const k=mkey(y,m), items=itemsForMonthFull(y,m);
+  const k=mkey(y,m), items=itemsForMonth(y,m);
   const acts=state.actuals[k]||{}, recon=(state.recon&&state.recon[k])||{};
   const byDay={}; items.forEach(it=>{const d=Math.min(Math.max(1,+it.day||1),daysIn(y,m));(byDay[d]=byDay[d]||[]).push(it);});
   let aBal=startVal, N=daysIn(y,m);
@@ -933,12 +910,6 @@ function setupAllowance(){
   const el=$('#debtAllowance'); let t;
   el.oninput=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); saveLocal(); scheduleCloudSave(); clearTimeout(t); t=setTimeout(renderDebts,300); };
   el.onchange=()=>{ state.debtAllowance=el.value===''?'':Number(el.value); save(); renderDebts(); };
-  const chk=$('#debtInBudget');
-  chk.checked=state.debtInBudget!==false;
-  chk.onchange=()=>{ state.debtInBudget=chk.checked; save(); render(); renderDebts(); };
-  const dd=$('#debtDay');
-  dd.value=Number(state.debtDay)||1;
-  dd.onchange=()=>{ state.debtDay=Math.min(Math.max(1,Number(dd.value)||1),28); dd.value=state.debtDay; save(); render(); };
 }
 // ---- debts tab ----
 function setTab(t){
@@ -1334,7 +1305,7 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},debtInBudget:true,debtDay:1,goals:[]}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},goals:[]}; seedState(); saveLocal(); }
   render();
   if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
   startSync();
