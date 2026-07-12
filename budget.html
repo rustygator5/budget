@@ -1346,6 +1346,23 @@ $('#authPw').onkeydown=e=>{if(e.key==='Enter')$('#authSignIn').click();};
   document.addEventListener('visibilitychange',()=>{if(!document.hidden && session)cloudPoll();});
   if(session && session.access_token) enterApp(); else showLogin();
 })();
+
+// ✕ back to Wilson Dashboard — shown only inside the installed home-screen app,
+// where there's no browser chrome to navigate back with (DivTracker gets an X
+// from iOS automatically because it's cross-origin; same-origin pages don't).
+(function(){
+  const standalone = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  if (!standalone) return;
+  const h1 = document.querySelector('header h1');
+  if (!h1) return;
+  const x = document.createElement('a');
+  x.href = '/';
+  x.title = 'Back to Wilson Dashboard';
+  x.setAttribute('aria-label','Back to Wilson Dashboard');
+  x.textContent = '✕';
+  x.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;border:1px solid rgba(128,128,128,.5);color:inherit;text-decoration:none;font-size:14px;font-weight:700;margin-right:10px;vertical-align:middle;';
+  h1.insertBefore(x, h1.firstChild);
+})();
 </script>
 </body>
 </html>
