@@ -49,7 +49,7 @@
   tr.today td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
   .todaybadge{background:var(--accent);color:#04293f;font-size:9px;font-weight:800;
     padding:1px 6px;border-radius:10px;margin-left:5px;letter-spacing:.5px;vertical-align:middle}
-  .draghandle{cursor:grab;color:var(--muted);user-select:none;font-size:15px;line-height:1}
+  .draghandle{cursor:grab;color:var(--muted);user-select:none;font-size:15px;line-height:1;touch-action:none}
   .draghandle:hover{color:var(--accent)}
   .draghandle:active{cursor:grabbing}
   tr.dragging{opacity:.45}
@@ -881,6 +881,39 @@ function scrollToToday(){
   if(el && $('#budgetView').style.display!=='none') el.scrollIntoView({block:'center'});
 }
 
+// ---- touch drag & drop (mobile) — mirrors the HTML5 DnD above, which touchscreens don't fire ----
+function setupTouchDnD(container,rowSel,getInfo,onDrop){
+  let info=null, srcTr=null;
+  container.addEventListener('touchstart',e=>{
+    const h=e.target.closest('.draghandle'); if(!h)return;
+    srcTr=h.closest(rowSel); if(!srcTr)return;
+    info=getInfo(srcTr);
+    srcTr.classList.add('dragging');
+  },{passive:true});
+  container.addEventListener('touchmove',e=>{
+    if(!info)return;
+    e.preventDefault();
+    const t=e.touches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const over=el&&el.closest(rowSel);
+    container.querySelectorAll('.drop-target').forEach(x=>{if(x!==over)x.classList.remove('drop-target');});
+    if(over&&over!==srcTr) over.classList.add('drop-target');
+  },{passive:false});
+  container.addEventListener('touchend',e=>{
+    if(!info)return;
+    const t=e.changedTouches[0];
+    const el=document.elementFromPoint(t.clientX,t.clientY);
+    const over=el&&el.closest(rowSel);
+    container.querySelectorAll('.dragging,.drop-target').forEach(x=>x.classList.remove('dragging','drop-target'));
+    if(over) onDrop(info,over);
+    info=null; srcTr=null;
+  });
+  container.addEventListener('touchcancel',()=>{
+    container.querySelectorAll('.dragging,.drop-target').forEach(x=>x.classList.remove('dragging','drop-target'));
+    info=null; srcTr=null;
+  });
+}
+
 // ---- drag & drop to change an item's date ----
 function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
 let dragInfo=null;
@@ -922,6 +955,9 @@ function setupDnD(){
     dragInfo=null;
   });
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));dragInfo=null;});
+  setupTouchDnD(rows,'tr[data-day]',
+    tr=>({id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday}),
+    (info,tr)=>applyDrag(info,+tr.dataset.day));
 }
 
 // ---- drag to reorder debts ----
@@ -957,6 +993,7 @@ function setupDebtDnD(){
     debtDrag=null;
   });
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));debtDrag=null;});
+  setupTouchDnD(rows,'tr[data-id]', tr=>tr.dataset.id, (id,tr)=>reorderDebts(id,tr.dataset.id));
 }
 // allowance input: bind once; live-update without clobbering what you're typing
 function setupAllowance(){
