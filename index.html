@@ -580,7 +580,7 @@ function itemsForMonth(y,m){
 // memoized payoff plan (recomputed only when debts/allowance change) so the budget can read it cheaply
 let _planCache=null,_planSig='__none__';
 function getPlan(){
-  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance});
+  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance,p:state.paidMonths});
   if(sig!==_planSig){_planSig=sig;_planCache=buildPlan();}
   return _planCache;
 }
@@ -839,13 +839,16 @@ function saveEdit(id,recurring,k){
   if(recurring){
     const it=state.recurring.find(x=>x.id===id); if(!it)return;
     it.name=name;it.amount=amount;it.type=type;
-    const freq=$('#ed_freq').value; it.freq=freq; delete it.day;delete it.weekday;delete it.anchor;
-    if(freq==='weekly') it.weekday=+$('#ed_w').value;
-    else if(freq==='biweekly') it.anchor=$('#ed_a').value||isoFirst();
-    else it.day=Math.min(Math.max(1,+$('#ed_d').value||1),31);
+    withKeyMigration(it,true,k,()=>{
+      const freq=$('#ed_freq').value; it.freq=freq; delete it.day;delete it.weekday;delete it.anchor;
+      if(freq==='weekly') it.weekday=+$('#ed_w').value;
+      else if(freq==='biweekly') it.anchor=$('#ed_a').value||isoFirst();
+      else it.day=Math.min(Math.max(1,+$('#ed_d').value||1),31);
+    });
   }else{
     const it=(state.oneoff[k]||[]).find(x=>x.id===id); if(!it)return;
-    it.name=name;it.amount=amount;it.type=type;it.day=Math.min(Math.max(1,+$('#ed_d').value||1),31);
+    it.name=name;it.amount=amount;it.type=type;
+    withKeyMigration(it,false,k,()=>{ it.day=Math.min(Math.max(1,+$('#ed_d').value||1),31); });
   }
   editing=null; save(); renderItems(); render();
 }
@@ -930,20 +933,45 @@ function setupTouchDnD(container,rowSel,getInfo,onDrop){
 
 // ---- drag & drop to change an item's date ----
 function ordinal(n){const s=['th','st','nd','rd'],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0]);}
+// Dialed-in amounts (state.actuals) and reconciliations (state.recon) are keyed by the item's
+// occurrence day (r_<id>_<day> / o_<id>_<day>), so changing an item's date would silently detach
+// them. Wrap any timing change in this: it snapshots the occurrence keys per month, runs the
+// change, then moves each stored entry to the matching new key (n-th occurrence → n-th occurrence).
+function withKeyMigration(item,isRecurring,monthK,mutate){
+  const months=isRecurring
+    ? [...new Set([...Object.keys(state.actuals||{}),...Object.keys(state.recon||{})])]
+    : [monthK];
+  const occ=k=>{const p=k.split('-'),y=+p[0],m=+p[1]-1;
+    return isRecurring? occThisMonth(item,y,m).map(o=>o.key) : ['o_'+item.id+'_'+(item.day||1)];};
+  const before={}; months.forEach(k=>before[k]=occ(k));
+  mutate();
+  months.forEach(k=>{
+    const oldK=before[k], newK=occ(k);
+    [(state.actuals||{})[k],(state.recon||{})[k]].forEach(bucket=>{
+      if(!bucket)return;
+      const vals=oldK.map(o=>bucket[o]);
+      oldK.forEach((o,i)=>{ if(vals[i]!==undefined && o!==newK[i]) delete bucket[o]; });
+      newK.forEach((n,i)=>{ if(i<oldK.length && vals[i]!==undefined && oldK[i]!==n) bucket[n]=vals[i]; });
+    });
+  });
+}
 let dragInfo=null;
 function applyDrag(info,targetDay){
   if(!info||info.srcDay===targetDay) return;
   const k=mkey(cur.y,cur.m); let item, detail='';
   if(info.rec){
     item=state.recurring.find(x=>x.id===info.id); if(!item)return;
-    if(item.freq==='weekly'){ item.weekday=new Date(cur.y,cur.m,targetDay).getDay(); detail=' (every '+DOW[item.weekday]+')'; }
-    else if(item.freq==='biweekly'){
-      const a=parseLocal(item.anchor); a.setDate(a.getDate()+(targetDay-info.srcDay));
-      item.anchor=a.getFullYear()+'-'+String(a.getMonth()+1).padStart(2,'0')+'-'+String(a.getDate()).padStart(2,'0');
-      detail=' (every 2 weeks)';
-    } else { item.day=targetDay; detail=' (the '+ordinal(targetDay)+' each month)'; }
+    withKeyMigration(item,true,k,()=>{
+      if(item.freq==='weekly'){ item.weekday=new Date(cur.y,cur.m,targetDay).getDay(); detail=' (every '+DOW[item.weekday]+')'; }
+      else if(item.freq==='biweekly'){
+        const a=parseLocal(item.anchor); a.setDate(a.getDate()+(targetDay-info.srcDay));
+        item.anchor=a.getFullYear()+'-'+String(a.getMonth()+1).padStart(2,'0')+'-'+String(a.getDate()).padStart(2,'0');
+        detail=' (every 2 weeks)';
+      } else { item.day=targetDay; detail=' (the '+ordinal(targetDay)+' each month)'; }
+    });
   } else {
-    item=(state.oneoff[k]||[]).find(x=>x.id===info.id); if(!item)return; item.day=targetDay;
+    item=(state.oneoff[k]||[]).find(x=>x.id===info.id); if(!item)return;
+    withKeyMigration(item,false,k,()=>{ item.day=targetDay; });
   }
   save(); render();
   toast('Moved "'+(item.name||'item')+'" to '+MONTHS[cur.m].slice(0,3)+' '+targetDay+detail);
@@ -1058,8 +1086,12 @@ function simulatePlan(strat){
   if(!work.length){res.empty=true;return res;}
   const live=()=>work.filter(d=>d.bal>0.005);
   const now=new Date(), cleared=new Set(); const MAXM=1200; let month=0;
+  // start at the first month NOT yet applied via the schedule's Paid ticks
+  // (applied months already updated the balances, so simulating them again would double-count)
+  let sy=now.getFullYear(), sm=now.getMonth();
+  while(state.paidMonths && state.paidMonths[mkey(sy,sm)] && typeof state.paidMonths[mkey(sy,sm)]==='object'){ sm++; if(sm>11){sm=0;sy++;} }
   while(live().length && month<MAXM){
-    const date=new Date(now.getFullYear(),now.getMonth()+month,1);
+    const date=new Date(sy,sm+month,1);
     const before=live().reduce((a,d)=>a+d.bal,0);
     const mInt={};
     live().forEach(d=>{const it=d.bal*monthlyRate(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
@@ -1129,42 +1161,77 @@ function buildPlan(){
 
 function renderSchedule(plan){
   const el=$('#schedulePanel');
-  if(!plan.hasDebt || !(plan.feasible && !plan.belowMin)){ el.innerHTML=''; return; }
   state.paidMonths=state.paidMonths||{};
   const paid=state.paidMonths;
+  // months already APPLIED to the balances — records store what was paid ({l,pay,int,prev}), oldest first.
+  // (a legacy `true` value = ticked before balance tracking existed; cosmetic only)
+  const applied=Object.keys(paid).filter(mk=>paid[mk]&&typeof paid[mk]==='object').sort();
+  const showSim=plan.hasDebt && plan.feasible && !plan.belowMin;
+  if(!applied.length && !showSim){ el.innerHTML=''; return; }
+  const lastApplied=applied[applied.length-1];
   const debts=state.debts.slice();
-  const showInt={}; debts.forEach(d=>showInt[d.id]=(plan.intByDebt[d.id]||0)>0.005);
+  const showInt={};
+  debts.forEach(d=>{ showInt[d.id]=(plan.intByDebt[d.id]||0)>0.005 || applied.some(mk=>((paid[mk].int||{})[d.id]||0)>0.005); });
   let head='<th class="l">Paid · Month</th>';
   debts.forEach(d=>{ head+=`<th>${esc(d.name||'Debt')} pay</th>`; if(showInt[d.id]) head+=`<th>${esc(d.name||'Debt')} int</th>`; });
   head+='<th>Total</th>';
-  const totPay={}, totInt={}; let grand=0, rows='', paidCount=0;
-  plan.schedule.forEach(row=>{
-    const isPaid=!!paid[row.mk]; if(isPaid)paidCount++;
-    let tr=`<td class="l"><label class="paidlabel"><input type="checkbox" class="paidchk" data-mk="${row.mk}"${isPaid?' checked':''}> ${row.label}</label></td>`, mTot=0;
+  const totPay={}, totInt={}; let grand=0, rows='';
+  const cells=(payMap,intMap)=>{ let tr='',mTot=0;
     debts.forEach(d=>{
-      const p=row.pay[d.id]||0, it=row.interest[d.id]||0;
+      const p=payMap[d.id]||0, it=intMap[d.id]||0;
       mTot+=p; totPay[d.id]=(totPay[d.id]||0)+p; totInt[d.id]=(totInt[d.id]||0)+it;
       tr+=`<td>${p>0.005?fmt(p):'—'}</td>`;
       if(showInt[d.id]) tr+=`<td class="sched-int">${it>0.005?fmt(it):'—'}</td>`;
     });
-    grand+=mTot; tr+=`<td>${fmt(mTot)}</td>`;
-    rows+=`<tr class="${isPaid?'paid':''}">${tr}</tr>`;
+    grand+=mTot; return tr+`<td>${fmt(mTot)}</td>`; };
+  applied.forEach(mk=>{
+    const rec=paid[mk], undoable=mk===lastApplied;
+    rows+=`<tr class="paid"><td class="l"><label class="paidlabel"><input type="checkbox" class="paidchk" data-mk="${mk}" data-act="undo" checked${undoable?'':' disabled'} title="${undoable?'Untick to undo this month and restore the balances':'Undo newest months first'}"> ${esc(rec.l||mk)}</label></td>${cells(rec.pay||{},rec.int||{})}</tr>`;
+  });
+  if(showSim) plan.schedule.forEach((row,i)=>{
+    const legacy=paid[row.mk]===true, first=i===0;
+    const title=legacy?'Marked paid before balance tracking — untick to clear the mark (balances unchanged)'
+      :first?'Tick once you’ve made this month’s payments — updates each debt’s balance'
+      :'Pay months in order — tick the first unpaid month';
+    rows+=`<tr${legacy?' class="paid"':''}><td class="l"><label class="paidlabel"><input type="checkbox" class="paidchk" data-mk="${row.mk}" data-act="${legacy?'unmark':'apply'}"${legacy?' checked':''}${(first||legacy)?'':' disabled'} title="${title}"> ${row.label}</label></td>${cells(row.pay,row.interest)}</tr>`;
   });
   let tot='<td class="l">Total</td>';
   debts.forEach(d=>{ tot+=`<td>${fmt(totPay[d.id]||0)}</td>`; if(showInt[d.id]) tot+=`<td class="sched-int">${fmt(totInt[d.id]||0)}</td>`; });
   tot+=`<td>${fmt(grand)}</td>`;
-  el.innerHTML=`<div class="plan-title">🗓️ Payment schedule <span class="sched-paidcount">${paidCount} of ${plan.schedule.length} months paid</span></div>
-    <div class="plan-summary">Tick a box once you've made that month's payments. <span class="sched-int">Red “int”</span> columns show interest accrued that month. Total interest over the plan: <b>${fmt(plan.totalInterest)}</b>.</div>
+  const count=applied.length+' paid'+(showSim?' · '+plan.schedule.length+' to go':'');
+  el.innerHTML=`<div class="plan-title">🗓️ Payment schedule <span class="sched-paidcount">${count}</span></div>
+    <div class="plan-summary">Tick a month once you've made its payments — each debt's balance updates automatically, so the plan stays in step with reality (untick the newest paid month to undo). <span class="sched-int">Red “int”</span> columns show interest accrued that month.${showSim?' Interest still ahead: <b>'+fmt(plan.totalInterest)+'</b>.':''}</div>
     <div class="sched-wrap"><table id="schedTbl"><thead><tr>${head}</tr></thead><tbody>${rows}<tr class="totalrow">${tot}</tr></tbody></table></div>`;
   el.querySelectorAll('.paidchk').forEach(chk=>{
     chk.onchange=()=>{
-      state.paidMonths=state.paidMonths||{};
-      const mk=chk.dataset.mk;
-      if(chk.checked)state.paidMonths[mk]=true; else delete state.paidMonths[mk];
-      chk.closest('tr').classList.toggle('paid',chk.checked);
-      const c=el.querySelector('.sched-paidcount');
-      if(c)c.textContent=plan.schedule.filter(r=>state.paidMonths[r.mk]).length+' of '+plan.schedule.length+' months paid';
-      save();
+      const mk=chk.dataset.mk, act=chk.dataset.act;
+      if(act==='apply'){
+        const row=plan.schedule.find(r=>r.mk===mk); if(!row){chk.checked=false;return;}
+        const sum=Object.values(row.pay).reduce((a,b)=>a+b,0);
+        if(!confirm('Mark '+row.label+' as paid?\n\nThis applies '+fmt(sum)+' in payments (and that month’s interest) to your debt balances. Untick it later to undo.')){chk.checked=false;return;}
+        const prev={};
+        state.debts.forEach(d=>{
+          if(row.pay[d.id]!=null||row.interest[d.id]!=null){
+            prev[d.id]=Number(d.current)||0;
+            const nb=prev[d.id]+(row.interest[d.id]||0)-(row.pay[d.id]||0);
+            d.current=Math.max(0,Math.round(nb*100)/100);
+          }
+        });
+        state.paidMonths[mk]={l:row.label,pay:row.pay,int:row.interest,prev};
+        save(); renderDebts(); toast(row.label+' paid — balances updated');
+      }else if(act==='undo'){
+        const rec=state.paidMonths[mk]; if(!rec||typeof rec!=='object')return;
+        state.debts.forEach(d=>{
+          if(rec.prev && rec.prev[d.id]!=null) d.current=rec.prev[d.id];
+          else if(((rec.pay||{})[d.id]!=null)||((rec.int||{})[d.id]!=null))
+            d.current=Math.round(((Number(d.current)||0)-((rec.int||{})[d.id]||0)+((rec.pay||{})[d.id]||0))*100)/100;
+        });
+        delete state.paidMonths[mk];
+        save(); renderDebts(); toast((rec.l||mk)+' undone — balances restored');
+      }else{ // clear a legacy cosmetic tick
+        delete state.paidMonths[mk];
+        save(); renderDebts();
+      }
     };
   });
 }
