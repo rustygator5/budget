@@ -6,15 +6,29 @@
 <title>Monthly Budget</title>
 <style>
   :root{
-    --bg:#0f172a; --panel:#1e293b; --panel2:#273449; --line:#334155;
-    --txt:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8;
-    --income:#34d399; --expense:#f87171; --warn:#fbbf24;
-    --good:#34d399; --bad:#f87171;
+    /* DivTracker theme — Florida Gators accents: UF Orange #FA4616 · UF Blue #0021A5 */
+    --gator-orange:#FA4616; --gator-blue:#0021A5;
+    --bg:#ffffff; --panel:#F7F6F3; --panel2:#EFEDE8; --line:#E3E1DA;
+    --txt:#1A1915; --muted:#6B6966; --accent:#0021A5;
+    --income:#3B6D11; --expense:#A32D2D; --warn:#854F0B;
+    --good:#3B6D11; --bad:#A32D2D;
+    --accent-tint:rgba(0,33,165,.08); --orange-tint:rgba(250,70,22,.14);
+  }
+  @media(prefers-color-scheme:dark){
+    :root{
+      --bg:#1A1915; --panel:#242320; --panel2:#2E2C28; --line:#3A3834;
+      --txt:#F0EEE8; --muted:#A8A49E; --accent:#7B90EE;
+      --income:#8FBF62; --expense:#E58A8A; --warn:#D9A968;
+      --good:#8FBF62; --bad:#E58A8A;
+      --accent-tint:rgba(123,144,238,.16); --orange-tint:rgba(255,122,80,.20);
+    }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);
     font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px}
-  header{background:linear-gradient(90deg,#1e3a5f,#0f172a);padding:14px 18px;
+  /* Gator stripe along the very top of the app (matches DivTracker) */
+  body::before{content:'';display:block;height:4px;background:linear-gradient(90deg,var(--gator-orange),var(--gator-blue))}
+  header{background:var(--bg);padding:14px 18px;
     display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
   h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.3px}
   .monthnav{display:flex;align-items:center;gap:10px;margin-left:8px}
@@ -23,9 +37,9 @@
   .monthnav button:hover{border-color:var(--accent)}
   .monthlabel{min-width:150px;text-align:center;font-weight:600;font-size:15px}
   .spacer{flex:1}
-  .btn{background:var(--accent);color:#04293f;border:none;padding:9px 14px;border-radius:8px;
+  .btn{background:var(--gator-blue);color:#fff;border:none;padding:9px 14px;border-radius:8px;
     font-weight:600;cursor:pointer;font-size:13px}
-  .btn:hover{filter:brightness(1.08)}
+  .btn:hover{opacity:.85}
   .btn.ghost{background:var(--panel2);color:var(--txt);border:1px solid var(--line)}
   .wrap{padding:18px;max-width:1100px;margin:0 auto}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
@@ -43,30 +57,30 @@
     letter-spacing:.5px;position:sticky;top:0}
   td.l,th.l{text-align:left}
   td.c,th.c{text-align:center}
-  tr.weekend td{background:rgba(148,163,184,.06)}
+  tr.weekend td{background:rgba(107,105,102,.07)}
   tr.dayfirst td{border-top:2px solid var(--line)}
-  tr.today td{background:rgba(56,189,248,.14);font-weight:700;color:#fff}
-  tr.today td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
-  .todaybadge{background:var(--accent);color:#04293f;font-size:9px;font-weight:800;
+  tr.today td{background:var(--accent-tint);font-weight:700;color:var(--txt)}
+  tr.today td:first-child{box-shadow:inset 4px 0 0 var(--gator-orange)}
+  .todaybadge{background:var(--gator-orange);color:#fff;font-size:9px;font-weight:800;
     padding:1px 6px;border-radius:10px;margin-left:5px;letter-spacing:.5px;vertical-align:middle}
   .draghandle{cursor:grab;color:var(--muted);user-select:none;font-size:15px;line-height:1;touch-action:none}
   .draghandle:hover{color:var(--accent)}
   .draghandle:active{cursor:grabbing}
   tr.dragging{opacity:.45}
-  tr.drop-target td{background:rgba(56,189,248,.20)!important;border-top:2px solid var(--accent);border-bottom:2px solid var(--accent)}
+  tr.drop-target td{background:var(--orange-tint)!important;border-top:2px solid var(--gator-orange);border-bottom:2px solid var(--gator-orange)}
   .pill{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
-  .pill.income{background:rgba(52,211,153,.15);color:var(--income)}
-  .pill.expense{background:rgba(248,113,113,.15);color:var(--expense)}
+  .pill.income{background:rgba(59,109,17,.14);color:var(--income)}
+  .pill.expense{background:rgba(163,45,45,.12);color:var(--expense)}
   .amt-in{color:var(--income)}
   .amt-out{color:var(--expense)}
   input.actual{background:transparent;border:1px solid transparent;color:var(--muted);
     width:90px;text-align:right;padding:4px 6px;border-radius:6px;font-size:13px}
   input.actual:hover{border-color:var(--line)}
   input.actual:focus{outline:none;border-color:var(--accent);background:var(--panel2)}
-  input.actual.edited{color:var(--warn);font-weight:700;border-color:rgba(251,191,36,.5)}
+  input.actual.edited{color:var(--warn);font-weight:700;border-color:rgba(133,79,11,.5)}
   .bal{font-weight:700}
   .pos{color:var(--good)} .neg{color:var(--bad)}
-  tr.totalrow td{border-top:2px solid var(--accent);background:var(--panel2);font-size:14px}
+  tr.totalrow td{border-top:2px solid var(--gator-orange);background:var(--panel2);font-size:14px}
   tr.diffrow td{border-top:1px solid var(--line);font-size:15px}
   .balcell{cursor:pointer}
   .balcell:hover{outline:1px dashed var(--accent);outline-offset:-1px}
@@ -111,8 +125,8 @@
   .tabs{display:flex;gap:6px;margin-left:10px}
   .tab{background:transparent;border:1px solid var(--line);color:var(--muted);padding:8px 14px;
     border-radius:8px;cursor:pointer;font-size:14px;font-weight:600}
-  .tab:hover{border-color:var(--accent);color:var(--txt)}
-  .tab.active{background:var(--accent);color:#04293f;border-color:var(--accent)}
+  .tab:hover{border-color:var(--gator-orange);color:var(--txt)}
+  .tab.active{background:var(--gator-blue);color:#fff;border-color:var(--gator-blue)}
   /* debts */
   .debts-layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
   .debts-main{flex:1;min-width:320px}
@@ -135,7 +149,7 @@
   .namecell .del{flex:none}
   #debtTbl input:hover{border-color:var(--line)}
   #debtTbl input:focus{outline:none;border-color:var(--accent)}
-  #debtTbl tr.totalrow td{border-top:2px solid var(--accent);background:var(--panel2);font-weight:700}
+  #debtTbl tr.totalrow td{border-top:2px solid var(--gator-orange);background:var(--panel2);font-weight:700}
   #debtTbl th.sortable{cursor:pointer;user-select:none}
   #debtTbl th.sortable:hover{color:var(--txt)}
   #debtTbl .si{color:var(--accent)}
@@ -152,7 +166,7 @@
     padding:5px 8px;border-radius:6px;font-size:13px;font-weight:700}
   #debtTbl select.dtype{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     padding:5px 6px;border-radius:6px;font-size:12px}
-  select.prio-high{color:var(--expense);border-color:rgba(248,113,113,.6)!important}
+  select.prio-high{color:var(--expense);border-color:rgba(163,45,45,.6)!important}
   select.prio-medium{color:var(--warn)}
   select.prio-low{color:var(--muted)}
   .debts-main{overflow-x:auto;border-radius:12px}
@@ -179,7 +193,7 @@
   #schedTbl th.l,#schedTbl td.l{text-align:left}
   #schedTbl th:first-child,#schedTbl td:first-child{position:sticky;left:0;background:var(--panel);z-index:1;box-shadow:1px 0 0 var(--line)}
   #schedTbl thead th:first-child{background:var(--panel2);z-index:2}
-  #schedTbl tr.totalrow td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;border-top:2px solid var(--accent)}
+  #schedTbl tr.totalrow td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;border-top:2px solid var(--gator-orange)}
   #schedTbl tr.totalrow td:first-child{z-index:2}
   .sched-int{color:var(--expense)}
   /* overview */
@@ -195,18 +209,18 @@
   .gname:hover{border-color:var(--line)} .gname:focus{outline:none;border-color:var(--accent)}
   .goal-eta{color:var(--muted);font-size:12px;white-space:nowrap}
   .goal-bar{height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin:8px 0}
-  .goal-fill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
+  .goal-fill{height:100%;background:linear-gradient(90deg,#5C9430,#3B6D11)}
   .goal-nums{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;flex-wrap:wrap}
   .goal-nums input{width:100px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:5px 7px;border-radius:6px;text-align:right;font-size:13px}
   .goal-nums input:focus{outline:none;border-color:var(--accent)}
   .goal-pct{margin-left:auto;font-weight:700;color:var(--income)}
   .paidlabel{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
-  .paidchk{cursor:pointer;accent-color:#34d399;width:15px;height:15px}
+  .paidchk{cursor:pointer;accent-color:var(--income);width:15px;height:15px}
   #schedTbl tr.paid td:not(:first-child){opacity:.45;text-decoration:line-through}
   .sched-paidcount{font-size:11px;color:var(--income);font-weight:600;margin-left:8px}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
-  .pctfill{height:100%;background:linear-gradient(90deg,#34d399,#10b981)}
+  .pctfill{height:100%;background:linear-gradient(90deg,#5C9430,#3B6D11)}
   .pctnum{font-weight:700;min-width:46px;text-align:right;color:var(--income)}
   .money.auto{color:var(--muted);font-style:italic}
   #startNote{color:var(--muted);font-size:12px}
@@ -218,9 +232,9 @@
   .thermo .tube{position:absolute;top:0;left:50%;transform:translateX(-50%);width:34px;height:236px;
     background:var(--panel2);border:3px solid var(--line);border-radius:18px;overflow:hidden}
   .thermo .tubefill{position:absolute;bottom:0;left:0;right:0;height:0;
-    background:linear-gradient(180deg,#34d399,#10b981);transition:height .5s ease}
+    background:linear-gradient(180deg,#5C9430,#3B6D11);transition:height .5s ease}
   .thermo .bulb{position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:58px;height:58px;
-    border-radius:50%;background:linear-gradient(180deg,#34d399,#10b981);border:3px solid var(--line)}
+    border-radius:50%;background:linear-gradient(180deg,#5C9430,#3B6D11);border:3px solid var(--line)}
   .thermo-stats{font-size:13px;color:var(--muted);line-height:1.8;text-align:left}
   .thermo-stats b{color:var(--txt)}
   @media(max-width:680px){.thermo-wrap{width:100%}}
@@ -264,7 +278,7 @@
   <button class="btn ghost" id="ioBtn">⇅ Backup</button>
   <span id="acctEmail" class="acct-email" title="Signed-in account"></span>
   <button class="btn ghost" id="signOutBtn">Sign out</button>
-  <span id="syncStatus" title="Sync status" style="font-size:18px;color:#94a3b8;cursor:default">●</span>
+  <span id="syncStatus" title="Sync status" style="font-size:18px;color:var(--muted);cursor:default">●</span>
 </header>
 
 <div class="wrap">
@@ -442,8 +456,8 @@ function save(){saveLocal();scheduleCloudSave();}
 // ---- sync status dot ----
 function setStatus(s){
   const el=$('#syncStatus'); if(!el)return;
-  const map={synced:['#34d399','Synced to your account'],saving:['#fbbf24','Saving…'],
-    offline:['#f87171','Offline — saved on this device only'],local:['#94a3b8','Local only']};
+  const map={synced:['var(--income)','Synced to your account'],saving:['var(--warn)','Saving…'],
+    offline:['var(--expense)','Offline — saved on this device only'],local:['var(--muted)','Local only']};
   el.style.color=map[s][0]; el.title=map[s][1];
 }
 
@@ -494,14 +508,14 @@ async function loadSnapshots(){
   const el=$('#snapList'); el.innerHTML='<span class="hint">Loading…</span>';
   try{
     const r=await fetch(REST+'/snapshots?select=id,created_at&app=eq.budget&order=created_at.desc&limit=30',{headers:authHeaders()});
-    if(!r.ok){el.innerHTML='<span class="hint" style="color:#f59e0b">Snapshot storage isn’t set up yet — run supabase-snapshots.sql once in the Supabase SQL Editor, then snapshots start automatically.</span>';return;}
+    if(!r.ok){el.innerHTML='<span class="hint" style="color:var(--warn)">Snapshot storage isn’t set up yet — run supabase-snapshots.sql once in the Supabase SQL Editor, then snapshots start automatically.</span>';return;}
     const rows=await r.json();
     if(!rows.length){el.innerHTML='<span class="hint">No snapshots yet — one is taken automatically after your next save.</span>';return;}
     el.innerHTML=rows.map(x=>{
       const lb=new Date(x.created_at).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
       return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line)"><span style="font-size:13px">'+lb+'</span><button class="btn ghost" style="font-size:12px" onclick="restoreSnapshot('+x.id+',\''+lb.replace(/'/g,'')+'\')">↩ Restore</button></div>';
     }).join('');
-  }catch(e){el.innerHTML='<span class="hint" style="color:#f87171">Could not load snapshots.</span>';}
+  }catch(e){el.innerHTML='<span class="hint" style="color:var(--expense)">Could not load snapshots.</span>';}
 }
 async function restoreSnapshot(id,lb){
   if(!confirm('Restore your budget from the snapshot taken '+lb+'?\n\nYour current budget is snapshotted first, so you can undo this restore the same way.'))return;
