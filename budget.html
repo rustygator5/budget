@@ -217,6 +217,7 @@
   .paidlabel{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
   .paidchk{cursor:pointer;accent-color:var(--income);width:15px;height:15px}
   #schedTbl tr.paid td:not(:first-child){opacity:.45;text-decoration:line-through}
+  #schedTbl td.cellpaid{opacity:.55;text-decoration:line-through}
   .sched-paidcount{font-size:11px;color:var(--income);font-weight:600;margin-left:8px}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
@@ -429,7 +430,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, goals:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
@@ -580,7 +581,7 @@ function itemsForMonth(y,m){
 // memoized payoff plan (recomputed only when debts/allowance change) so the budget can read it cheaply
 let _planCache=null,_planSig='__none__';
 function getPlan(){
-  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance,p:state.paidMonths});
+  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance,p:state.paidDebts});
   if(sig!==_planSig){_planSig=sig;_planCache=buildPlan();}
   return _planCache;
 }
@@ -1086,27 +1087,31 @@ function simulatePlan(strat){
   if(!work.length){res.empty=true;return res;}
   const live=()=>work.filter(d=>d.bal>0.005);
   const now=new Date(), cleared=new Set(); const MAXM=1200; let month=0;
-  // start at the first month NOT yet applied via the schedule's Paid ticks
-  // (applied months already updated the balances, so simulating them again would double-count)
-  let sy=now.getFullYear(), sm=now.getMonth();
-  while(state.paidMonths && state.paidMonths[mkey(sy,sm)] && typeof state.paidMonths[mkey(sy,sm)]==='object'){ sm++; if(sm>11){sm=0;sy++;} }
+  const sy=now.getFullYear(), sm=now.getMonth();
+  // debts already paid THIS month via per-debt Paid ticks: their balance + interest were
+  // applied when ticked, so this month they don't accrue or get paid again, and the money
+  // they used comes out of this month's allowance pool.
+  const settled=(state.paidDebts&&state.paidDebts[mkey(sy,sm)])||{};
+  let settledPaidSum=0; Object.keys(settled).forEach(id=>{ settledPaidSum+=(settled[id].pay||0); });
   while(live().length && month<MAXM){
     const date=new Date(sy,sm+month,1);
-    const before=live().reduce((a,d)=>a+d.bal,0);
+    const skip=month===0?settled:{};              // only the current month can be partially paid
+    const act=()=>live().filter(d=>!skip[d.id]);  // debts still to be handled this month
+    const before=act().reduce((a,d)=>a+d.bal,0);
     const mInt={};
-    live().forEach(d=>{const it=d.bal*monthlyRate(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
-    let pool=allowance; const pay={}, minPaid={};
+    act().forEach(d=>{const it=d.bal*monthlyRate(d,date); d.bal+=it; res.totalInterest+=it; mInt[d.id]=it; res.intByDebt[d.id]=(res.intByDebt[d.id]||0)+it;});
+    let pool=month===0?Math.max(0,allowance-settledPaidSum):allowance; const pay={}, minPaid={};
     // 1) true contractual minimum on every debt
-    live().forEach(d=>{const m=requiredMin(d,d.bal,date); const p=Math.min(Math.max(0,m),d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=p; minPaid[d.id]=p;});
+    act().forEach(d=>{const m=requiredMin(d,d.bal,date); const p=Math.min(Math.max(0,m),d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=p; minPaid[d.id]=p;});
     // 2) strategy steers the extra
-    const extra=strat.allocExtra(live(),date,pool,minPaid)||{};
-    live().forEach(d=>{ const e=Math.min(extra[d.id]||0,d.bal,Math.max(0,pool)); if(e>0){d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
+    const extra=strat.allocExtra(act(),date,pool,minPaid)||{};
+    act().forEach(d=>{ const e=Math.min(extra[d.id]||0,d.bal,Math.max(0,pool)); if(e>0){d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
     // 3) any leftover -> current-rate avalanche (also the whole 'avalanche' strategy)
-    live().slice().sort((a,b)=>monthlyRate(b,date)-monthlyRate(a,date)||a.bal-b.bal).forEach(d=>{ if(pool>0.005){const e=Math.min(pool,d.bal); d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
+    act().slice().sort((a,b)=>monthlyRate(b,date)-monthlyRate(a,date)||a.bal-b.bal).forEach(d=>{ if(pool>0.005){const e=Math.min(pool,d.bal); d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
     if(month===0) res.payNow={...pay};
     res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), mk:mkey(date.getFullYear(),date.getMonth()), pay:{...pay}, interest:{...mInt}, debtRemaining:work.reduce((a,d)=>a+d.bal,0)});
     work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
-    const after=live().reduce((a,d)=>a+d.bal,0);
+    const after=act().reduce((a,d)=>a+d.bal,0);
     month++;
     if(after>0 && after>=before-0.005){ res.feasible=false; break; }
   }
@@ -1159,78 +1164,104 @@ function buildPlan(){
   return best;
 }
 
+function mkLabel(mk){const p=(mk||'').split('-');const m=(+p[1]||1)-1;return (MONTHS[m]||'').slice(0,3)+" '"+String(p[0]||'').slice(2);}
+// one-time migration: old month-level records ({l,pay,int,prev}) and legacy `true` cosmetic
+// ticks in state.paidMonths → per-debt records in state.paidDebts[mk][debtId]={pay,int,prev}.
+function migratePaid(){
+  state.paidDebts=state.paidDebts||{};
+  if(!state.paidMonths || !Object.keys(state.paidMonths).length) return false;
+  Object.keys(state.paidMonths).forEach(mk=>{
+    const v=state.paidMonths[mk];
+    if(v&&typeof v==='object'&&v.pay){
+      state.paidDebts[mk]=state.paidDebts[mk]||{};
+      Object.keys(v.pay).forEach(id=>{ if((v.pay[id]||0)>0.005||((v.int&&v.int[id])||0)>0.005)
+        state.paidDebts[mk][id]={pay:v.pay[id]||0,int:(v.int&&v.int[id])||0,prev:(v.prev&&v.prev[id])}; });
+    }
+    // legacy `true` cosmetic marks had no balance effect — drop them
+  });
+  state.paidMonths={};
+  return true;
+}
 function renderSchedule(plan){
   const el=$('#schedulePanel');
-  state.paidMonths=state.paidMonths||{};
-  const paid=state.paidMonths;
-  // months already APPLIED to the balances — records store what was paid ({l,pay,int,prev}), oldest first.
-  // (a legacy `true` value = ticked before balance tracking existed; cosmetic only)
-  const applied=Object.keys(paid).filter(mk=>paid[mk]&&typeof paid[mk]==='object').sort();
-  const showSim=plan.hasDebt && plan.feasible && !plan.belowMin;
-  if(!applied.length && !showSim){ el.innerHTML=''; return; }
-  const lastApplied=applied[applied.length-1];
+  state.paidDebts=state.paidDebts||{};
+  const paidDebts=state.paidDebts;
+  const now=new Date(), curMk=mkey(now.getFullYear(),now.getMonth());
   const debts=state.debts.slice();
+  const showSim=plan.hasDebt && plan.feasible && !plan.belowMin;
+  const sched=plan.schedule||[];
+  const curRow=sched.find(r=>r.mk===curMk);       // sim's current-month row (pending amounts, settled debts = 0)
+  const futureRows=sched.filter(r=>r.mk>curMk);
+  const settled=paidDebts[curMk]||{};
+  const pastMks=Object.keys(paidDebts).filter(mk=>mk<curMk && Object.keys(paidDebts[mk]).length).sort();
+  const pendingIds=(showSim&&curRow)?debts.filter(d=>!settled[d.id]&&(curRow.pay[d.id]||0)>0.005).map(d=>d.id):[];
+  const hasCurrent=Object.keys(settled).length>0 || pendingIds.length>0;
+  if(!pastMks.length && !hasCurrent && !(showSim&&futureRows.length)){ el.innerHTML=''; return; }
+  // which debts warrant an interest column (any interest anywhere in plan or records)
   const showInt={};
-  debts.forEach(d=>{ showInt[d.id]=(plan.intByDebt[d.id]||0)>0.005 || applied.some(mk=>((paid[mk].int||{})[d.id]||0)>0.005); });
-  let head='<th class="l">Paid · Month</th>';
+  debts.forEach(d=>{ let has=(plan.intByDebt&&plan.intByDebt[d.id]||0)>0.005;
+    Object.keys(paidDebts).forEach(mk=>{const r=paidDebts[mk][d.id]; if(r&&(r.int||0)>0.005)has=true;});
+    showInt[d.id]=has; });
+  let head='<th class="l">Month</th>';
   debts.forEach(d=>{ head+=`<th>${esc(d.name||'Debt')} pay</th>`; if(showInt[d.id]) head+=`<th>${esc(d.name||'Debt')} int</th>`; });
   head+='<th>Total</th>';
   const totPay={}, totInt={}; let grand=0, rows='';
-  const cells=(payMap,intMap)=>{ let tr='',mTot=0;
+  // cellFor(d) -> {pay,int,paid,box}
+  function pushRow(label,cellFor,rowCls){
+    let tr=`<td class="l">${esc(label)}</td>`, mTot=0;
     debts.forEach(d=>{
-      const p=payMap[d.id]||0, it=intMap[d.id]||0;
+      const c=cellFor(d)||{}; const p=c.pay||0, it=c.int||0;
       mTot+=p; totPay[d.id]=(totPay[d.id]||0)+p; totInt[d.id]=(totInt[d.id]||0)+it;
-      tr+=`<td>${p>0.005?fmt(p):'—'}</td>`;
-      if(showInt[d.id]) tr+=`<td class="sched-int">${it>0.005?fmt(it):'—'}</td>`;
+      const amt=p>0.005?fmt(p):(c.box?'':'—');
+      tr+=`<td${c.paid?' class="cellpaid"':''}>${c.box||''}${amt}</td>`;
+      if(showInt[d.id]) tr+=`<td class="sched-int${c.paid?' cellpaid':''}">${it>0.005?fmt(it):'—'}</td>`;
     });
-    grand+=mTot; return tr+`<td>${fmt(mTot)}</td>`; };
-  applied.forEach(mk=>{
-    const rec=paid[mk], undoable=mk===lastApplied;
-    rows+=`<tr class="paid"><td class="l"><label class="paidlabel"><input type="checkbox" class="paidchk" data-mk="${mk}" data-act="undo" checked${undoable?'':' disabled'} title="${undoable?'Untick to undo this month and restore the balances':'Undo newest months first'}"> ${esc(rec.l||mk)}</label></td>${cells(rec.pay||{},rec.int||{})}</tr>`;
+    grand+=mTot; rows+=`<tr${rowCls?` class="${rowCls}"`:''}>${tr}<td>${fmt(mTot)}</td></tr>`;
+  }
+  // 1) past months already paid — read-only audit trail
+  pastMks.forEach(mk=>pushRow(mkLabel(mk),d=>{const r=paidDebts[mk][d.id];
+    return r?{pay:r.pay||0,int:r.int||0,paid:true,box:'<input type="checkbox" class="paidchk" checked disabled> '}:{};},'paid'));
+  // 2) current month — per-debt checkboxes (undo settled, apply pending)
+  if(hasCurrent) pushRow((curRow&&curRow.label)||mkLabel(curMk),d=>{
+    const r=settled[d.id];
+    if(r) return {pay:r.pay||0,int:r.int||0,paid:true,
+      box:`<input type="checkbox" class="paidchk" data-act="undo" data-id="${d.id}" data-mk="${curMk}" checked title="Untick to undo this payment and restore ${esc(d.name||'the')} balance"> `};
+    if(showSim&&curRow&&(curRow.pay[d.id]||0)>0.005) return {pay:curRow.pay[d.id]||0,int:curRow.interest[d.id]||0,paid:false,
+      box:`<input type="checkbox" class="paidchk" data-act="apply" data-id="${d.id}" data-mk="${curMk}" title="Tick when you've made this payment — updates ${esc(d.name||'this debt')}'s balance"> `};
+    return {};
   });
-  if(showSim) plan.schedule.forEach((row,i)=>{
-    const legacy=paid[row.mk]===true, first=i===0;
-    const title=legacy?'Marked paid before balance tracking — untick to clear the mark (balances unchanged)'
-      :first?'Tick once you’ve made this month’s payments — updates each debt’s balance'
-      :'Pay months in order — tick the first unpaid month';
-    rows+=`<tr${legacy?' class="paid"':''}><td class="l"><label class="paidlabel"><input type="checkbox" class="paidchk" data-mk="${row.mk}" data-act="${legacy?'unmark':'apply'}"${legacy?' checked':''}${(first||legacy)?'':' disabled'} title="${title}"> ${row.label}</label></td>${cells(row.pay,row.interest)}</tr>`;
-  });
+  // 3) future months from the plan — no checkboxes
+  if(showSim) futureRows.forEach(row=>pushRow(row.label,d=>({pay:row.pay[d.id]||0,int:row.interest[d.id]||0})));
   let tot='<td class="l">Total</td>';
   debts.forEach(d=>{ tot+=`<td>${fmt(totPay[d.id]||0)}</td>`; if(showInt[d.id]) tot+=`<td class="sched-int">${fmt(totInt[d.id]||0)}</td>`; });
   tot+=`<td>${fmt(grand)}</td>`;
-  const count=applied.length+' paid'+(showSim?' · '+plan.schedule.length+' to go':'');
+  const settledCount=Object.keys(settled).length;
+  const count=`${settledCount} paid this month`+(pendingIds.length?` · ${pendingIds.length} to go`:(settledCount?' · all done ✓':''));
   el.innerHTML=`<div class="plan-title">🗓️ Payment schedule <span class="sched-paidcount">${count}</span></div>
-    <div class="plan-summary">Tick a month once you've made its payments — each debt's balance updates automatically, so the plan stays in step with reality (untick the newest paid month to undo). <span class="sched-int">Red “int”</span> columns show interest accrued that month.${showSim?' Interest still ahead: <b>'+fmt(plan.totalInterest)+'</b>.':''}</div>
+    <div class="plan-summary">Tick <b>each debt's box</b> as you make that payment — its balance updates on its own, so the plan stays in step with reality (untick to undo). Only this month's payments are checkable. <span class="sched-int">Red “int”</span> columns show interest accrued that month.${showSim?' Interest still ahead: <b>'+fmt(plan.totalInterest)+'</b>.':''}</div>
     <div class="sched-wrap"><table id="schedTbl"><thead><tr>${head}</tr></thead><tbody>${rows}<tr class="totalrow">${tot}</tr></tbody></table></div>`;
   el.querySelectorAll('.paidchk').forEach(chk=>{
+    if(chk.disabled)return;
     chk.onchange=()=>{
-      const mk=chk.dataset.mk, act=chk.dataset.act;
+      const act=chk.dataset.act, id=chk.dataset.id, mk=chk.dataset.mk;
+      const d=state.debts.find(x=>x.id===id);
       if(act==='apply'){
-        const row=plan.schedule.find(r=>r.mk===mk); if(!row){chk.checked=false;return;}
-        const sum=Object.values(row.pay).reduce((a,b)=>a+b,0);
-        if(!confirm('Mark '+row.label+' as paid?\n\nThis applies '+fmt(sum)+' in payments (and that month’s interest) to your debt balances. Untick it later to undo.')){chk.checked=false;return;}
-        const prev={};
-        state.debts.forEach(d=>{
-          if(row.pay[d.id]!=null||row.interest[d.id]!=null){
-            prev[d.id]=Number(d.current)||0;
-            const nb=prev[d.id]+(row.interest[d.id]||0)-(row.pay[d.id]||0);
-            d.current=Math.max(0,Math.round(nb*100)/100);
-          }
-        });
-        state.paidMonths[mk]={l:row.label,pay:row.pay,int:row.interest,prev};
-        save(); renderDebts(); toast(row.label+' paid — balances updated');
+        if(!d){chk.checked=false;return;}
+        const row=(getPlan().schedule||[]).find(r=>r.mk===mk);
+        const pay=row?(row.pay[id]||0):0, int=row?(row.interest[id]||0):0;
+        if(!(pay>0.005)){chk.checked=false;return;}
+        if(!confirm(`Mark ${d.name||'this debt'}'s ${fmt(pay)} payment for ${mkLabel(mk)} as paid?\n\nThis updates its balance. Untick to undo.`)){chk.checked=false;return;}
+        const prev=Number(d.current)||0;
+        d.current=Math.max(0,Math.round((prev+int-pay)*100)/100);
+        state.paidDebts[mk]=state.paidDebts[mk]||{};
+        state.paidDebts[mk][id]={pay,int,prev,l:mkLabel(mk)};
+        save(); renderDebts(); toast(`${d.name||'Payment'} paid — balance updated`);
       }else if(act==='undo'){
-        const rec=state.paidMonths[mk]; if(!rec||typeof rec!=='object')return;
-        state.debts.forEach(d=>{
-          if(rec.prev && rec.prev[d.id]!=null) d.current=rec.prev[d.id];
-          else if(((rec.pay||{})[d.id]!=null)||((rec.int||{})[d.id]!=null))
-            d.current=Math.round(((Number(d.current)||0)-((rec.int||{})[d.id]||0)+((rec.pay||{})[d.id]||0))*100)/100;
-        });
-        delete state.paidMonths[mk];
-        save(); renderDebts(); toast((rec.l||mk)+' undone — balances restored');
-      }else{ // clear a legacy cosmetic tick
-        delete state.paidMonths[mk];
-        save(); renderDebts();
+        const rec=state.paidDebts[mk]&&state.paidDebts[mk][id]; if(!rec)return;
+        if(d) d.current=(rec.prev!=null)?rec.prev:Math.max(0,Math.round(((Number(d.current)||0)-(rec.int||0)+(rec.pay||0))*100)/100);
+        delete state.paidDebts[mk][id];
+        if(!Object.keys(state.paidDebts[mk]).length) delete state.paidDebts[mk];
+        save(); renderDebts(); toast(`${(d&&d.name)||'Payment'} undone — balance restored`);
       }
     };
   });
@@ -1243,6 +1274,7 @@ function renderDebts(){
     if(d.min===undefined||d.min===null){ d.min=(d.monthly!==undefined?d.monthly:''); delete d.monthly; _fx=true; }
     if(d.promoEnd){const f=fixIsoYear(d.promoEnd); if(f!==d.promoEnd){d.promoEnd=f;_fx=true;}}
   });
+  if(migratePaid())_fx=true;
   if(_fx)save();
   const _ae=$('#debtAllowance');
   if(document.activeElement!==_ae) _ae.value=(state.debtAllowance===''||state.debtAllowance==null)?'':state.debtAllowance;
@@ -1261,8 +1293,9 @@ function renderDebts(){
       priority:d=>PRIO_W[d.priority||'medium']}[debtSort.col];
     disp.sort((a,b)=>{const ka=key(a),kb=key(b);return (ka<kb?-1:ka>kb?1:0)*debtSort.dir;});
   }
+  const _now=new Date(), _settledNow=(state.paidDebts&&state.paidDebts[mkey(_now.getFullYear(),_now.getMonth())])||{};
   const payoffTxt=d=>{ if((Number(d.current)||0)<=0.005) return 'Paid'; const m=plan.payoff[d.id]; return m?(m+(m===1?' mo':' mos')):'—'; };
-  const payNowTxt=d=>{ const v=plan.payNow[d.id]; return v!=null?fmt(v):'—'; };
+  const payNowTxt=d=>{ if(_settledNow[d.id]) return '✓ paid'; const v=plan.payNow[d.id]; return v!=null?fmt(v):'—'; };
   if(!state.debts.length){
     $('#debtRows').innerHTML=`<tr><td colspan="11" class="l empty" style="padding:14px">No debts yet — click "＋ Add debt".</td></tr>`;
   }else{
@@ -1476,7 +1509,7 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},goals:[]}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},goals:[]}; seedState(); saveLocal(); }
   render();
   if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
   startSync();
