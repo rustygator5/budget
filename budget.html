@@ -1158,7 +1158,17 @@ function buildPlan(){
     if(!r.feasible) continue;
     if(!best || r.totalInterest < best.totalInterest-0.005) best=r;
   }
-  if(!best){ base.feasible=false; return best=base; }
+  if(!best){
+    base.feasible=false;
+    // diagnose WHY: usually the total monthly interest (at today's effective rates) outruns the allowance
+    let totInt=0, top=null;
+    liveDebts.forEach(d=>{ const bal=Number(d.current)||0, it=bal*monthlyRate(d,now);
+      totInt+=it; if(!top||it>top.amt) top={name:d.name||'Debt',amt:it,apr:Number(d.apr)||0}; });
+    base.monthlyInterest=totInt;
+    base.interestExceeds = totInt >= allowance-0.005;
+    base.topInterestDebt = top;
+    return base;
+  }
   Object.assign(best,{allowance,hasDebt:true,noAllowance:false,belowMin:false,feasible:true,totalMin:base.totalMin});
   best.savedVsNaive = (naive&&naive.feasible)? Math.max(0,naive.totalInterest-best.totalInterest) : 0;
   return best;
@@ -1360,7 +1370,9 @@ function renderDebts(){
     let note=`Minimums total <b>${fmt(plan.totalMin)}</b>/mo.`;
     if(plan.noAllowance) note+=` <span class="plan-warn">Set an allowance to build a plan.</span>`;
     else if(plan.belowMin) note+=` <span class="plan-warn">Below your minimums — raise it to at least ${fmt(plan.totalMin)}.</span>`;
-    else if(!plan.feasible) note+=` <span class="plan-warn">Below what's needed to cover interest + minimums.</span>`;
+    else if(!plan.feasible) note+=plan.interestExceeds
+      ? ` <span class="plan-warn">Interest ≈ ${fmt(plan.monthlyInterest)}/mo — more than your allowance.</span>`
+      : ` <span class="plan-warn">Not enough to clear these within the planning window.</span>`;
     $('#allowanceNote').innerHTML=note;
   } else $('#allowanceNote').textContent='';
   // payoff plan panel
@@ -1369,7 +1381,15 @@ function renderDebts(){
     let warn='';
     if(plan.noAllowance) warn='<div class="plan-warn">Enter a monthly allowance above to build your payoff plan.</div>';
     else if(plan.belowMin) warn=`<div class="plan-warn">Your allowance (${fmt(plan.allowance)}) is below the total minimum payments (${fmt(plan.totalMin)}/mo) — you can’t cover every minimum. Raise the allowance to at least ${fmt(plan.totalMin)}.</div>`;
-    else if(!plan.feasible) warn='<div class="plan-warn">Your allowance doesn’t cover the minimum payments plus interest — increase it to clear these debts.</div>';
+    else if(!plan.feasible){
+      if(plan.interestExceeds){
+        warn=`<div class="plan-warn">Your debts accrue about <b>${fmt(plan.monthlyInterest)}/mo</b> in interest — more than your <b>${fmt(plan.allowance)}</b> allowance, so the balances can’t start going down yet.`
+          +(plan.topInterestDebt&&plan.topInterestDebt.amt>0.005?` <b>${esc(plan.topInterestDebt.name)}</b> alone adds ${fmt(plan.topInterestDebt.amt)}/mo (at ${plan.topInterestDebt.apr.toFixed(2)}%).`:'')
+          +`<br>Fixes: raise the allowance toward <b>${fmt(plan.monthlyInterest)}</b>, or — if a mortgage/large loan is included — enter its real monthly payment as the <b>Min Pmt</b>, or leave that loan out of this payoff planner.</div>`;
+      } else {
+        warn=`<div class="plan-warn">These balances can’t be fully cleared within the planning window — a 0% promo may revert to a rate that outpaces your allowance, or the balances are very large. Try raising the allowance, or entering each loan’s real minimum payment.</div>`;
+      }
+    }
     const showPlan = plan.feasible && !plan.belowMin;
     let summary='';
     if(showPlan){
