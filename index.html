@@ -1112,8 +1112,13 @@ function simulatePlan(strat){
     res.schedule.push({label:MONTHS[date.getMonth()].slice(0,3)+" '"+String(date.getFullYear()).slice(2), mk:mkey(date.getFullYear(),date.getMonth()), pay:{...pay}, interest:{...mInt}, debtRemaining:work.reduce((a,d)=>a+d.bal,0)});
     work.forEach(d=>{ if(d.bal<=0.005 && !cleared.has(d.id)){cleared.add(d.id); res.order.push({id:d.id,name:d.name,month:month+1}); res.payoff[d.id]=month+1;} });
     const after=act().reduce((a,d)=>a+d.bal,0);
+    // Feasibility = "can these be cleared with a FULL allowance?" The current month may be
+    // partially (or over-) pre-paid via Paid ticks, leaving little/no pool for the rest — that
+    // is NOT infeasibility; next month resumes with the full allowance. So don't judge month 0
+    // when it's been pre-paid (skip logic active this month).
+    const partialThisMonth = month===0 && (settledPaidSum>0.005 || Object.keys(settled).length>0);
     month++;
-    if(after>0 && after>=before-0.005){ res.feasible=false; break; }
+    if(!partialThisMonth && after>0 && after>=before-0.005){ res.feasible=false; break; }
   }
   if(month>=MAXM) res.feasible=false;
   res.months=month;
