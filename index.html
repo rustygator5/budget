@@ -255,6 +255,9 @@
   .auth-overlay{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center;z-index:200;padding:16px}
   .auth-overlay.show{display:flex}
   .auth-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:26px;width:340px;max-width:94vw;display:flex;flex-direction:column;gap:10px}
+  /* The sign-in gate covers the header, so it needs its own way back to the hub.
+     Absolutely positioned so it doesn't become a flex item and break centering. */
+  .auth-back{position:absolute;top:16px;left:16px}
   .auth-logo{font-size:22px;font-weight:800;text-align:center}
   .auth-sub{color:var(--muted);text-align:center;font-size:13px;margin-bottom:6px}
   .auth-box input{background:var(--panel2);border:1px solid var(--line);color:var(--txt);padding:10px;border-radius:8px;font-size:14px}
@@ -267,6 +270,7 @@
 </head>
 <body>
 <div class="auth-overlay show" id="authOverlay">
+  <a class="backlink auth-back" href="/" id="backHubAuth" title="Back to Wilson Dashboard">←<span class="bt">Dashboard</span></a>
   <div class="auth-box">
     <div class="auth-logo">💰 Budget</div>
     <div class="auth-sub">Sign in to your own private budget</div>
