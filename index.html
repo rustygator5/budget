@@ -31,6 +31,17 @@
   header{background:var(--bg);padding:14px 18px;
     display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
   h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.3px}
+  /* "← Dashboard" back link to the Wilson Dashboard hub — same as the Family
+     Schedule app. The hub is an installed PWA with no browser back button, so
+     without this there's no way back out. Same-origin (both on
+     rustygator5.github.io), so "/" resolves to the hub. Collapses to an
+     arrow-only tap target on phones. */
+  .backlink{display:inline-flex;align-items:center;gap:5px;text-decoration:none;color:var(--muted);
+    border:1px solid var(--line);background:var(--panel2);border-radius:9px;padding:7px 11px;font-weight:700;font-size:13px;flex:none}
+  .backlink:hover{background:var(--panel);color:var(--txt)}
+  .backlink .bt{display:inline}
+  @media (max-width:560px){ .backlink .bt{display:none}
+    .backlink{padding:0;min-width:44px;min-height:40px;justify-content:center;font-size:19px} }
   .monthnav{display:flex;align-items:center;gap:10px;margin-left:8px}
   .monthnav button{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     width:34px;height:34px;border-radius:8px;font-size:18px;cursor:pointer}
@@ -268,6 +279,7 @@
   </div>
 </div>
 <header>
+  <a class="backlink" href="/" id="backHub" title="Back to Wilson Dashboard">←<span class="bt">Dashboard</span></a>
   <h1>💰 Budget</h1>
   <div class="tabs">
     <button class="tab active" data-tab="budget">📅 Budget</button>
