@@ -229,6 +229,12 @@
   .paidchk{cursor:pointer;accent-color:var(--income);width:15px;height:15px}
   #schedTbl tr.paid td:not(:first-child){opacity:.45;text-decoration:line-through}
   #schedTbl td.cellpaid{opacity:.55;text-decoration:line-through}
+  input.payedit{width:76px;background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    padding:3px 5px;border-radius:5px;font-size:12px;text-align:right;vertical-align:middle}
+  input.payedit:hover{border-color:var(--accent)}
+  input.payedit:focus{outline:none;border-color:var(--accent)}
+  input.payedit.paid{border-color:var(--income);color:var(--income);font-weight:600}
+  .payedit-hint{color:var(--income);font-size:11px;margin-left:3px;cursor:default}
   .sched-paidcount{font-size:11px;color:var(--income);font-weight:600;margin-left:8px}
   .pctwrap{display:flex;align-items:center;gap:8px;justify-content:flex-end}
   .pctbar{width:64px;height:8px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
@@ -545,7 +551,7 @@ async function restoreSnapshot(id,lb){
     state=d;save();render();$('#ioModal').classList.remove('show');toast('Restored from '+lb);
   }catch(e){toast('Restore failed');}
 }
-function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput'))||a.id==='startBal'||a.id==='debtAllowance'||(a.closest&&a.closest('.modal-bg.show')));}
+function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput')||a.classList.contains('payedit'))||a.id==='startBal'||a.id==='debtAllowance'||(a.closest&&a.closest('.modal-bg.show')));}
 async function cloudPoll(){
   if(!session) return;
   const row=await cloudGet();
@@ -1225,7 +1231,7 @@ function renderSchedule(plan){
   const futureRows=sched.filter(r=>r.mk>curMk);
   const settled=paidDebts[curMk]||{};
   const pastMks=Object.keys(paidDebts).filter(mk=>mk<curMk && Object.keys(paidDebts[mk]).length).sort();
-  const pendingIds=(showSim&&curRow)?debts.filter(d=>!settled[d.id]&&(curRow.pay[d.id]||0)>0.005).map(d=>d.id):[];
+  const pendingIds=(showSim&&curRow)?debts.filter(d=>!settled[d.id]&&(Number(d.current)||0)>0.005).map(d=>d.id):[];
   const hasCurrent=Object.keys(settled).length>0 || pendingIds.length>0;
   if(!pastMks.length && !hasCurrent && !(showSim&&futureRows.length)){ el.innerHTML=''; return; }
   // which debts warrant an interest column (any interest anywhere in plan or records)
@@ -1243,7 +1249,7 @@ function renderSchedule(plan){
     debts.forEach(d=>{
       const c=cellFor(d)||{}; const p=c.pay||0, it=c.int||0;
       mTot+=p; totPay[d.id]=(totPay[d.id]||0)+p; totInt[d.id]=(totInt[d.id]||0)+it;
-      const amt=p>0.005?fmt(p):(c.box?'':'—');
+      const amt = c.amtHtml!==undefined ? c.amtHtml : (p>0.005?fmt(p):(c.box?'':'—'));
       tr+=`<td${c.paid?' class="cellpaid"':''}>${c.box||''}${amt}</td>`;
       if(showInt[d.id]) tr+=`<td class="sched-int${c.paid?' cellpaid':''}">${it>0.005?fmt(it):'—'}</td>`;
     });
@@ -1252,13 +1258,16 @@ function renderSchedule(plan){
   // 1) past months already paid — read-only audit trail
   pastMks.forEach(mk=>pushRow(mkLabel(mk),d=>{const r=paidDebts[mk][d.id];
     return r?{pay:r.pay||0,int:r.int||0,paid:true,box:'<input type="checkbox" class="paidchk" checked disabled> '}:{};},'paid'));
-  // 2) current month — per-debt checkboxes (undo settled, apply pending)
+  // 2) current month — per-debt checkbox + EDITABLE amount (edit to pay more/less than the plan)
+  const payInput=(d,val,extra)=>`<input type="number" step="0.01" min="0" class="payedit${extra||''}" data-id="${d.id}" data-mk="${curMk}" value="${(Number(val)||0).toFixed(2)}">`;
   if(hasCurrent) pushRow((curRow&&curRow.label)||mkLabel(curMk),d=>{
-    const r=settled[d.id];
-    if(r) return {pay:r.pay||0,int:r.int||0,paid:true,
-      box:`<input type="checkbox" class="paidchk" data-act="undo" data-id="${d.id}" data-mk="${curMk}" checked title="Untick to undo this payment and restore ${esc(d.name||'the')} balance"> `};
-    if(showSim&&curRow&&(curRow.pay[d.id]||0)>0.005) return {pay:curRow.pay[d.id]||0,int:curRow.interest[d.id]||0,paid:false,
-      box:`<input type="checkbox" class="paidchk" data-act="apply" data-id="${d.id}" data-mk="${curMk}" title="Tick when you've made this payment — updates ${esc(d.name||'this debt')}'s balance"> `};
+    const bal=Number(d.current)||0, r=settled[d.id];
+    if(r) return {pay:r.pay||0,int:r.int||0,paid:false,
+      box:`<input type="checkbox" class="paidchk" data-act="undo" data-id="${d.id}" data-mk="${curMk}" checked title="Untick to undo this payment and restore ${esc(d.name||'the')} balance"> `,
+      amtHtml:payInput(d,r.pay,' paid')+`<span class="payedit-hint" title="Edit the amount to change what you actually paid — the balance re-adjusts">✎</span>`};
+    if(showSim&&curRow&&bal>0.005) return {pay:curRow.pay[d.id]||0,int:curRow.interest[d.id]||0,paid:false,
+      box:`<input type="checkbox" class="paidchk" data-act="apply" data-id="${d.id}" data-mk="${curMk}" title="Edit the amount if needed, then tick when you've paid ${esc(d.name||'this debt')} — its balance updates"> `,
+      amtHtml:payInput(d,curRow.pay[d.id]||0)};
     return {};
   });
   // 3) future months from the plan — no checkboxes
@@ -1269,7 +1278,7 @@ function renderSchedule(plan){
   const settledCount=Object.keys(settled).length;
   const count=`${settledCount} paid this month`+(pendingIds.length?` · ${pendingIds.length} to go`:(settledCount?' · all done ✓':''));
   el.innerHTML=`<div class="plan-title">🗓️ Payment schedule <span class="sched-paidcount">${count}</span></div>
-    <div class="plan-summary">Tick <b>each debt's box</b> as you make that payment — its balance updates on its own, so the plan stays in step with reality (untick to undo). Only this month's payments are checkable. <span class="sched-int">Red “int”</span> columns show interest accrued that month.${showSim?' Interest still ahead: <b>'+fmt(plan.totalInterest)+'</b>.':''}</div>
+    <div class="plan-summary">For <b>this month</b>, edit the amount if you're paying more or less than the plan, then <b>tick the box</b> once you've paid — the balance updates to match (untick to undo). Only this month is checkable. <span class="sched-int">Red “int”</span> columns show interest accrued that month.${showSim?' Interest still ahead: <b>'+fmt(plan.totalInterest)+'</b>.':''}</div>
     <div class="sched-wrap"><table id="schedTbl"><thead><tr>${head}</tr></thead><tbody>${rows}<tr class="totalrow">${tot}</tr></tbody></table></div>`;
   el.querySelectorAll('.paidchk').forEach(chk=>{
     if(chk.disabled)return;
@@ -1279,14 +1288,17 @@ function renderSchedule(plan){
       if(act==='apply'){
         if(!d){chk.checked=false;return;}
         const row=(getPlan().schedule||[]).find(r=>r.mk===mk);
-        const pay=row?(row.pay[id]||0):0, int=row?(row.interest[id]||0):0;
-        if(!(pay>0.005)){chk.checked=false;return;}
-        if(!confirm(`Mark ${d.name||'this debt'}'s ${fmt(pay)} payment for ${mkLabel(mk)} as paid?\n\nThis updates its balance. Untick to undo.`)){chk.checked=false;return;}
+        const int=row?(row.interest[id]||0):0;
+        const inp=chk.closest('td').querySelector('.payedit');       // pay what's in the editable field
+        let pay=inp?Math.max(0,Number(inp.value)||0):(row?(row.pay[id]||0):0);
+        if(!(pay>0.005)){chk.checked=false; toast('Enter an amount to pay first'); if(inp){inp.focus();inp.select();} return;}
         const prev=Number(d.current)||0;
+        pay=Math.min(pay,Math.round((prev+int)*100)/100);            // can't pay more than what's owed
+        if(!confirm(`Record a ${fmt(pay)} payment to ${d.name||'this debt'} for ${mkLabel(mk)}?\n\nThis updates its balance. Untick to undo.`)){chk.checked=false;return;}
         d.current=Math.max(0,Math.round((prev+int-pay)*100)/100);
         state.paidDebts[mk]=state.paidDebts[mk]||{};
         state.paidDebts[mk][id]={pay,int,prev,l:mkLabel(mk)};
-        save(); renderDebts(); toast(`${d.name||'Payment'} paid — balance updated`);
+        save(); renderDebts(); toast(`${d.name||'Payment'}: ${fmt(pay)} paid — balance updated`);
       }else if(act==='undo'){
         const rec=state.paidDebts[mk]&&state.paidDebts[mk][id]; if(!rec)return;
         if(d) d.current=(rec.prev!=null)?rec.prev:Math.max(0,Math.round(((Number(d.current)||0)-(rec.int||0)+(rec.pay||0))*100)/100);
@@ -1294,6 +1306,21 @@ function renderSchedule(plan){
         if(!Object.keys(state.paidDebts[mk]).length) delete state.paidDebts[mk];
         save(); renderDebts(); toast(`${(d&&d.name)||'Payment'} undone — balance restored`);
       }
+    };
+  });
+  // edit an ALREADY-PAID amount → re-apply from the same starting balance
+  el.querySelectorAll('.payedit.paid').forEach(inp=>{
+    inp.onchange=()=>{
+      const id=inp.dataset.id, mk=inp.dataset.mk;
+      const rec=state.paidDebts[mk]&&state.paidDebts[mk][id]; if(!rec)return;
+      const d=state.debts.find(x=>x.id===id); if(!d)return;
+      const int=rec.int||0;
+      const prev=(rec.prev!=null)?rec.prev:((Number(d.current)||0)+(rec.pay||0)-int);  // pre-payment balance (anchor)
+      let pay=Math.max(0,Number(inp.value)||0);
+      pay=Math.min(pay,Math.round((prev+int)*100)/100);
+      d.current=Math.max(0,Math.round((prev+int-pay)*100)/100);
+      rec.pay=pay; rec.prev=prev;
+      save(); renderDebts(); toast(`${d.name||'Payment'} updated to ${fmt(pay)}`);
     };
   });
 }
