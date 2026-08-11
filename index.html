@@ -327,7 +327,7 @@
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="hint">Tip: the recurring amounts are <b>estimates</b>. Edit the <b>Actual</b> cell to dial in the exact amount — this updates <b>both</b> the Planned and Actual lines for that month, so every balance below re-adjusts. Clear a cell to snap back to the estimate. To reconcile to reality, <b>click an Actual Balance</b> and type your real bank balance (inserts a balancing adjustment). Recurring items repeat monthly. <b>Drag the ⠿ handle</b> on any row onto another day to change its date.</div>
+  <div class="hint">Tip: the recurring amounts are <b>estimates</b>. Edit the <b>Actual</b> cell to dial in the exact amount — this updates <b>both</b> the Planned and Actual lines for that month, so every balance below re-adjusts. Clear a cell to snap back to the estimate. To reconcile to reality, <b>click an Actual Balance</b> and type your real bank balance (inserts a balancing adjustment). Recurring items repeat monthly. <b>Drag the ⠿ handle</b> onto another day to move an occurrence — this changes <b>only this month</b>; to change the date every month, edit it in <b>＋ Manage items</b>.</div>
   </div><!-- /budgetView -->
 
   <div id="debtsView" style="display:none">
@@ -452,7 +452,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, goals:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 
@@ -578,8 +578,13 @@ function fixIsoYear(s){if(!s)return s;const p=s.split('-');if(p.length!==3)retur
 const DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 function occThisMonth(it,y,m){
   const N=daysIn(y,m), out=[];
+  // per-month date moves (from dragging on the Budget tab) override just THIS month.
+  // The key stays tied to the item's NATURAL schedule day, so dialed-in actuals/recon
+  // (keyed by it.key) stay attached to the occurrence even after it's moved for a month.
+  const moves=(state.moves&&state.moves[mkey(y,m)])||{};
   const base={id:it.id,name:it.name,type:it.type,amount:it.amount,recurring:true,freq:it.freq||'monthly'};
-  const push=d=>out.push({...base,day:d,key:'r_'+it.id+'_'+d});
+  const push=natDay=>{ const key='r_'+it.id+'_'+natDay; const mv=moves[key];
+    const day=(mv!=null)?Math.min(Math.max(1,mv),N):natDay; out.push({...base,day,key}); };
   if(it.freq==='weekly'){
     for(let d=1;d<=N;d++) if(new Date(y,m,d).getDay()===(+it.weekday)) push(d);
   }else if(it.freq==='biweekly'){
@@ -669,7 +674,7 @@ function render(){
       const signed=v=>(v>=0?'+':'−')+'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
       const adjNote=adj?`<div class="adjnote">adj ${signed(adj)}</div>`:'';
       const isToday=isCurMonth&&d===todayD;
-      const dragAttrs= it ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}"` : '';
+      const dragAttrs= it ? ` data-itemid="${it.id}" data-rec="${it.recurring?1:0}" data-freq="${it.freq||'oneoff'}" data-srcday="${d}" data-occkey="${it.key}"` : '';
       const nameCell = it
         ? '<span class="draghandle" draggable="true" title="Drag to another day to change its date">⠿</span> '
           + esc(it.name) + (it.recurring?' <span class="tag">↻</span>':'')
@@ -868,6 +873,7 @@ function saveEdit(id,recurring,k){
       else if(freq==='biweekly') it.anchor=$('#ed_a').value||isoFirst();
       else it.day=Math.min(Math.max(1,+$('#ed_d').value||1),31);
     });
+    clearMovesForItem(id); // schedule changed here → drop per-month drag exceptions
   }else{
     const it=(state.oneoff[k]||[]).find(x=>x.id===id); if(!it)return;
     it.name=name;it.amount=amount;it.type=type;
@@ -895,7 +901,7 @@ function renderItems(){
   document.querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>saveEdit(b.dataset.save,b.dataset.r==='1',k));
   document.querySelectorAll('.del').forEach(b=>b.onclick=()=>{
     const id=b.dataset.id;
-    if(b.dataset.r==='1')state.recurring=state.recurring.filter(x=>x.id!==id);
+    if(b.dataset.r==='1'){state.recurring=state.recurring.filter(x=>x.id!==id); clearMovesForItem(id);}
     else state.oneoff[k]=(state.oneoff[k]||[]).filter(x=>x.id!==id);
     editing=null; save();renderItems();render();
   });
@@ -978,20 +984,28 @@ function withKeyMigration(item,isRecurring,monthK,mutate){
     });
   });
 }
+// drop any per-month date overrides for an item (used when its schedule changes or it's deleted)
+function clearMovesForItem(id){
+  if(!state.moves)return; const pre='r_'+id+'_';
+  Object.keys(state.moves).forEach(mk=>{
+    Object.keys(state.moves[mk]).forEach(key=>{ if(key.indexOf(pre)===0) delete state.moves[mk][key]; });
+    if(!Object.keys(state.moves[mk]).length) delete state.moves[mk];
+  });
+}
 let dragInfo=null;
 function applyDrag(info,targetDay){
   if(!info||info.srcDay===targetDay) return;
   const k=mkey(cur.y,cur.m); let item, detail='';
   if(info.rec){
     item=state.recurring.find(x=>x.id===info.id); if(!item)return;
-    withKeyMigration(item,true,k,()=>{
-      if(item.freq==='weekly'){ item.weekday=new Date(cur.y,cur.m,targetDay).getDay(); detail=' (every '+DOW[item.weekday]+')'; }
-      else if(item.freq==='biweekly'){
-        const a=parseLocal(item.anchor); a.setDate(a.getDate()+(targetDay-info.srcDay));
-        item.anchor=a.getFullYear()+'-'+String(a.getMonth()+1).padStart(2,'0')+'-'+String(a.getDate()).padStart(2,'0');
-        detail=' (every 2 weeks)';
-      } else { item.day=targetDay; detail=' (the '+ordinal(targetDay)+' each month)'; }
-    });
+    // Move just THIS month's occurrence via an override — leave the recurring schedule alone,
+    // so future months keep the original date. (Change every month via “Manage items”.)
+    const occKey=info.occKey||('r_'+item.id+'_'+info.srcDay);
+    const natDay=+((occKey.split('_')[2])||info.srcDay);
+    state.moves=state.moves||{}; state.moves[k]=state.moves[k]||{};
+    if(targetDay===natDay){ delete state.moves[k][occKey]; if(!Object.keys(state.moves[k]).length) delete state.moves[k]; }
+    else state.moves[k][occKey]=targetDay;
+    detail=' — this month only (use “Manage items” to change every month)';
   } else {
     item=(state.oneoff[k]||[]).find(x=>x.id===info.id); if(!item)return;
     withKeyMigration(item,false,k,()=>{ item.day=targetDay; });
@@ -1004,7 +1018,7 @@ function setupDnD(){
   rows.addEventListener('dragstart',e=>{
     const h=e.target.closest('.draghandle'); if(!h)return;
     const tr=h.closest('tr'); if(!tr||tr.dataset.itemid===undefined)return;
-    dragInfo={id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday};
+    dragInfo={id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday,occKey:tr.dataset.occkey};
     e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain',dragInfo.id);}catch(_){}
     tr.classList.add('dragging');
   });
@@ -1021,7 +1035,7 @@ function setupDnD(){
   });
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));dragInfo=null;});
   setupTouchDnD(rows,'tr[data-day]',
-    tr=>({id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday}),
+    tr=>({id:tr.dataset.itemid,rec:tr.dataset.rec==='1',freq:tr.dataset.freq,srcDay:+tr.dataset.srcday,occKey:tr.dataset.occkey}),
     (info,tr)=>applyDrag(info,+tr.dataset.day));
 }
 
@@ -1577,7 +1591,7 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},goals:[]}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},moves:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},goals:[]}; seedState(); saveLocal(); }
   render();
   if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
   startSync();
