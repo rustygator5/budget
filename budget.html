@@ -327,7 +327,7 @@
     </tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="hint">Tip: the recurring amounts are <b>estimates</b>. Edit the <b>Actual</b> cell to dial in the exact amount — this updates <b>both</b> the Planned and Actual lines for that month, so every balance below re-adjusts. Clear a cell to snap back to the estimate. To reconcile to reality, <b>click an Actual Balance</b> and type your real bank balance (inserts a balancing adjustment). Recurring items repeat monthly. <b>Drag the ⠿ handle</b> onto another day to move an occurrence — this changes <b>only this month</b>; to change the date every month, edit it in <b>＋ Manage items</b>.</div>
+  <div class="hint">Tip: the recurring amounts are <b>estimates</b>. Edit the <b>Actual</b> cell to dial in the exact amount — this updates <b>both</b> the Planned and Actual lines for that month, so every balance below re-adjusts. Clear a cell to snap back to the estimate. To reconcile to reality, <b>click an Actual Balance</b> and type your real bank balance (inserts a balancing adjustment) — <b>clear the box and press Enter</b> to remove an adjustment and snap back to the calculated balance. Recurring items repeat monthly. <b>Drag the ⠿ handle</b> onto another day to move an occurrence — this changes <b>only this month</b>; to change the date every month, edit it in <b>＋ Manage items</b>.</div>
   </div><!-- /budgetView -->
 
   <div id="debtsView" style="display:none">
@@ -687,7 +687,7 @@ function render(){
         <td>${planCell}</td>
         <td>${actCell}</td>
         <td class="bal ${pBal<0?'neg':''}">${fmt(pBal)}</td>
-        <td class="bal balcell ${aBal<0?'neg':''} ${reconed?'reconciled':''}" data-rk="${rk}" data-val="${aBal}" title="Click to set your real bank balance on this day">${fmt(aBal)}${adjNote}</td>
+        <td class="bal balcell ${aBal<0?'neg':''} ${reconed?'reconciled':''}" data-rk="${rk}" data-val="${aBal}" title="${reconed?'Adjusted — click, clear the box and press Enter to remove this adjustment':'Click to set your real bank balance on this day'}">${fmt(aBal)}${adjNote}</td>
         <td></td></tr>`;
     });
   }
