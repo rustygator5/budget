@@ -173,6 +173,8 @@
   #debtTbl input.promo:hover{border-color:var(--line)}
   #debtTbl td.promo-soon input.promo{border-color:var(--warn);color:var(--warn)}
   #debtTbl td.promo-past input.promo{border-color:var(--bad);color:var(--bad)}
+  #debtTbl label.defchk{display:flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap}
+  #debtTbl label.defchk input{margin:0}
   #debtTbl select.prio{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     padding:5px 8px;border-radius:6px;font-size:13px;font-weight:700}
   #debtTbl select.dtype{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
@@ -588,7 +590,8 @@ function occThisMonth(it,y,m){
   if(it.freq==='weekly'){
     for(let d=1;d<=N;d++) if(new Date(y,m,d).getDay()===(+it.weekday)) push(d);
   }else if(it.freq==='biweekly'){
-    const ms=14*864e5, first=new Date(y,m,1,12).getTime(), last=new Date(y,m,N,12).getTime();
+    // whole-day bounds: the noon anchor drifts ±1h across DST, so noon bounds dropped paydays on the 1st
+    const ms=14*864e5, first=new Date(y,m,1).getTime(), last=new Date(y,m,N,23,59,59).getTime();
     let t=parseLocal(it.anchor).getTime();
     if(isNaN(t)) return out;
     if(t<first) t+=Math.ceil((first-t)/ms)*ms;
@@ -1118,7 +1121,7 @@ function requiredMin(d,bal,date){
 function simulatePlan(strat){
   const allowance=Number(state.debtAllowance)||0;
   const work=state.debts.filter(d=>(Number(d.current)||0)>0.005)
-    .map(d=>({id:d.id,name:d.name,bal:Number(d.current)||0,min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd,type:d.type}));
+    .map(d=>({id:d.id,name:d.name,bal:Number(d.current)||0,min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd,type:d.type,deferred:!!d.deferred}));
   const res={payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,schedule:[],intByDebt:{}};
   if(!work.length){res.empty=true;return res;}
   const live=()=>work.filter(d=>d.bal>0.005);
@@ -1139,6 +1142,14 @@ function simulatePlan(strat){
     let pool=month===0?Math.max(0,allowance-settledPaidSum):allowance; const pay={}, minPaid={};
     // 1) true contractual minimum on every debt
     act().forEach(d=>{const m=requiredMin(d,d.bal,date); const p=Math.min(Math.max(0,m),d.bal,Math.max(0,pool)); d.bal-=p; pool-=p; pay[d.id]=p; minPaid[d.id]=p;});
+    // 1b) deferred-interest promos are a hard deadline in EVERY strategy: any balance left at
+    // promoEnd gets interest back-charged to the start, so pay them down just-in-time first.
+    act().filter(d=>d.deferred&&inPromo(d,date)).sort((a,b)=>parseLocal(a.promoEnd)-parseLocal(b.promoEnd)).forEach(d=>{
+      const pe=parseLocal(d.promoEnd);
+      const pm=Math.max(1,(pe.getFullYear()-date.getFullYear())*12+(pe.getMonth()-date.getMonth())+(pe.getDate()>1?1:0)); // payments left incl. promo month
+      const need=Math.max(0,(d.bal+(pay[d.id]||0))/pm-(pay[d.id]||0)); const e=Math.min(need,d.bal,Math.max(0,pool));
+      if(e>0){d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;}
+    });
     // 2) strategy steers the extra
     const extra=strat.allocExtra(act(),date,pool,minPaid)||{};
     act().forEach(d=>{ const e=Math.min(extra[d.id]||0,d.bal,Math.max(0,pool)); if(e>0){d.bal-=e; pool-=e; pay[d.id]=(pay[d.id]||0)+e;} });
@@ -1374,7 +1385,8 @@ function renderDebts(){
     const mcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="money" data-val="${Number(d[f])||0}">${fmt(Number(d[f])||0)}</td>`;
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
     const promoCell=d=>{let cls='';if(d.promoEnd){const days=(parseLocal(d.promoEnd)-new Date())/864e5;cls=days<0?'promo-past':(days<60?'promo-soon':'');}
-      return `<td class="${cls}"><input class="promo debtinput" type="date" min="2000-01-01" max="2099-12-31" data-id="${d.id}" value="${d.promoEnd||''}"></td>`;};
+      const defBox=d.promoEnd?`<label class="defchk" title="Deferred interest (common on store cards like Lowe's): if ANY balance is left at the promo end, interest is charged back to the start. The planner will clear it in time."><input type="checkbox" class="deferred" data-id="${d.id}"${d.deferred?' checked':''}> deferred</label>`:'';
+      return `<td class="${cls}"><input class="promo debtinput" type="date" min="2000-01-01" max="2099-12-31" data-id="${d.id}" value="${d.promoEnd||''}">${defBox}</td>`;};
     const prioCell=d=>{const p=d.priority||'medium';
       return `<td><select class="prio debtinput prio-${p}" data-id="${d.id}">
         <option value="high"${p==='high'?' selected':''}>High</option>
@@ -1408,6 +1420,9 @@ function renderDebts(){
   });
   document.querySelectorAll('#debtRows input.promo').forEach(inp=>{
     inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoEnd=fixIsoYear(inp.value||'');save();renderDebts();}};
+  });
+  document.querySelectorAll('#debtRows input.deferred').forEach(cb=>{
+    cb.onchange=()=>{const d=state.debts.find(x=>x.id===cb.dataset.id);if(d){d.deferred=cb.checked;save();renderDebts();}};
   });
   document.querySelectorAll('#debtRows select.prio').forEach(sel=>{
     sel.onchange=()=>{const d=state.debts.find(x=>x.id===sel.dataset.id);if(d){d.priority=sel.value;save();renderDebts();}};
@@ -1462,8 +1477,10 @@ function renderDebts(){
     // promo-deadline callouts (future interest you can dodge)
     let promoNote='';
     const now=new Date();
-    const promos=state.debts.filter(d=>(Number(d.current)||0)>0.005 && d.promoEnd && parseLocal(d.promoEnd)>now && (Number(d.apr)||0)>0)
-      .map(d=>`<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge that interest.</li>`).join('');
+    const promos=state.debts.filter(d=>(Number(d.current)||0)>0.005 && d.promoEnd && parseLocal(d.promoEnd)>now && ((Number(d.apr)||0)>0||d.deferred))
+      .map(d=>d.deferred
+        ? `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b> — <b>deferred interest</b>: must be $0 by then or interest is back-charged to the start. The plan pays it off in time.</li>`
+        : `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge that interest.</li>`).join('');
     if(showPlan && promos) promoNote=`<div class="plan-summary" style="margin-top:6px">⏳ Promo deadlines:</div><ul class="plan-order">${promos}</ul>`;
     const list = plan.order.map(o=>`<li><b>${esc(o.name)}</b> <span class="pord-when">— paid off in ${o.month} mo${o.month===1?'':'s'}</span></li>`).join('');
     $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff plan — least-interest</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}${promoNote}`;
