@@ -457,6 +457,8 @@ const MONTHS=['January','February','March','April','May','June','July','August',
 let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
+let sessionDead=false;   // refresh token definitively rejected -> ask for a sign-in
+let cloudLoaded=false;   // true once we've actually read this account's cloud row
 
 // ---- auth ----
 function authHeaders(){return {...H,'Authorization':'Bearer '+((session&&session.access_token)||'')};}
@@ -465,10 +467,46 @@ function clearSession(){session=null;localStorage.removeItem(KEY+'.session');}
 async function authSignIn(email,pw){const r=await fetch(AUTH+'/token?grant_type=password',{method:'POST',headers:H,body:JSON.stringify({email,password:pw})});return r.json();}
 async function authSignUp(email,pw){const r=await fetch(AUTH+'/signup',{method:'POST',headers:H,body:JSON.stringify({email,password:pw})});return r.json();}
 async function authRecover(email){try{await fetch(AUTH+'/recover',{method:'POST',headers:H,body:JSON.stringify({email})});}catch(e){}}
+// The Wilson Dashboard shares this same-origin login and ROTATES the refresh token when it
+// refreshes. If it rotated ours while this page held an older copy, our token is already dead —
+// so always pick up whatever is newest in localStorage before (and after) trying to refresh.
+function adoptStoredSession(){
+  try{
+    const s=JSON.parse(localStorage.getItem(KEY+'.session'));
+    if(!s||!s.access_token||!s.user||!session||!session.user) return false;
+    if(s.user.id!==session.user.id) return false;
+    if(s.access_token===session.access_token && s.refresh_token===session.refresh_token) return false;
+    session=s; return true;
+  }catch(e){ return false; }
+}
+// 'ok' | 'bad' (token rejected) | 'neterr' (couldn't reach the server)
+async function doRefresh(tok){
+  try{
+    const r=await fetch(AUTH+'/token?grant_type=refresh_token',{method:'POST',headers:H,body:JSON.stringify({refresh_token:tok})});
+    if(r.ok){const s=await r.json(); if(s&&s.access_token){saveSession(s);return 'ok';} return 'bad';}
+    return (r.status===400||r.status===401)?'bad':'neterr';
+  }catch(e){ return 'neterr'; }
+}
 async function authRefresh(){
-  if(!session||!session.refresh_token)return false;
-  try{const r=await fetch(AUTH+'/token?grant_type=refresh_token',{method:'POST',headers:H,body:JSON.stringify({refresh_token:session.refresh_token})});
-    if(!r.ok)return false; const s=await r.json(); if(s&&s.access_token){saveSession(s);return true;}}catch(e){} return false;
+  if(!session)return false;
+  // If the dashboard already refreshed this shared login, just use its newer token —
+  // refreshing again would rotate it a second time and re-create the same race.
+  if(adoptStoredSession()){sessionDead=false;return true;}
+  if(!session.refresh_token)return false;
+  const res=await doRefresh(session.refresh_token);
+  if(res==='ok'){sessionDead=false;return true;}
+  if(res==='bad'){
+    if(adoptStoredSession()){sessionDead=false;return true;}  // rotated out from under us mid-flight
+    sessionDead=true;                                         // genuinely expired, not a network blip
+  }
+  return false;
+}
+// Rather than silently showing an old cached budget, ask for a sign-in.
+function promptReauth(){
+  clearInterval(pollTimer); pollTimer=null;
+  clearSession(); sessionDead=false; cloudLoaded=false;
+  const ov=$('#authOverlay'); if(ov) ov.classList.add('show');
+  authMsg('Your session expired. Sign in to load your latest budget.');
 }
 async function signOut(){try{await fetch(AUTH+'/logout',{method:'POST',headers:authHeaders()});}catch(e){} clearInterval(pollTimer); clearSession(); location.reload();}
 
@@ -497,6 +535,7 @@ async function cloudGet(retry){
 }
 async function cloudSave(retry){
   if(!session) return;
+  if(!cloudLoaded) return;   // haven't read the cloud yet - don't overwrite it with stale local state
   setStatus('saving'); const ts=new Date().toISOString();
   try{
     const r=await fetch(REST+'/budgets?on_conflict=user_id',{
@@ -556,9 +595,10 @@ async function restoreSnapshot(id,lb){
 function isEditing(){const a=document.activeElement;return a&&(a.classList&&(a.classList.contains('actual')||a.classList.contains('debtinput')||a.classList.contains('payedit'))||a.id==='startBal'||a.id==='debtAllowance'||(a.closest&&a.closest('.modal-bg.show')));}
 async function cloudPoll(){
   if(!session) return;
+  adoptStoredSession();
   const row=await cloudGet();
-  if(row===undefined){setStatus('offline');return;}
-  setStatus('synced');
+  if(row===undefined){setStatus('offline'); if(sessionDead) promptReauth(); return;}
+  setStatus('synced'); cloudLoaded=true;
   if(row && row.data && row.data.__budget){
     const t=new Date(row.updated_at).getTime();
     if(t>serverTs && !isEditing()){serverTs=t;state=row.data;saveLocal();render();}
@@ -566,10 +606,11 @@ async function cloudPoll(){
 }
 async function startSync(){
   const row=await cloudGet();
-  if(row===undefined){setStatus('offline');}
+  if(row===undefined){ setStatus('offline'); if(sessionDead){ promptReauth(); return; } }
   else if(row && row.data && row.data.__budget){
+    cloudLoaded=true;
     state=row.data; serverTs=new Date(row.updated_at).getTime(); saveLocal(); render(); setStatus('synced');
-  }else{ await cloudSave(); } // first time on this account — create the row
+  }else{ cloudLoaded=true; await cloudSave(); } // first time on this account — create the row
   clearInterval(pollTimer); pollTimer=setInterval(cloudPoll,7000);
 }
 function mkey(y,m){return y+'-'+String(m+1).padStart(2,'0');}
