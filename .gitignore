@@ -1,2 +1,7 @@
 .claude/
 *.log
+
+# personal budget data exports - never publish (repo is public)
+backup-*.json
+*-backup.json
+budget-data*.json
