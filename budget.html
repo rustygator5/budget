@@ -1370,12 +1370,15 @@ function renderSchedule(plan){
   state.paidDebts=state.paidDebts||{};
   const paidDebts=state.paidDebts;
   const now=new Date(), curMk=mkey(now.getFullYear(),now.getMonth());
-  // Columns follow the custom payoff order when one is set, so the schedule reads
-  // left-to-right in the same sequence as the plan above it. (Sort is stable, so any
-  // debt not in the order — e.g. one already cleared — keeps its relative place at the end.)
+  // Columns always follow the payoff order shown in the plan above: the user's custom
+  // sequence when they've set one, otherwise the order the recommended plan clears them in.
+  // (Sort is stable, so a debt outside that order — e.g. one already cleared, or any debt at
+  // all when the plan is infeasible and has no order — keeps its relative place at the end.)
   const debts=state.debts.slice();
-  if(plan.isCustom && (state.customOrder||[]).length){
-    const rank={}; state.customOrder.forEach((id,i)=>{rank[id]=i;});
+  const seq=(plan.isCustom && (state.customOrder||[]).length)
+    ? state.customOrder : (plan.order||[]).map(o=>o.id);
+  if(seq.length){
+    const rank={}; seq.forEach((id,i)=>{rank[id]=i;});
     debts.sort((a,b)=>(rank[a.id]!=null?rank[a.id]:9999)-(rank[b.id]!=null?rank[b.id]:9999));
   }
   const showSim=plan.hasDebt && plan.feasible && !plan.belowMin;
