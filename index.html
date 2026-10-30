@@ -196,6 +196,17 @@
   .plan-summary b{color:var(--txt)}
   .plan-order{margin:0;padding-left:20px;line-height:1.9}
   .plan-order .pord-when{color:var(--muted);font-size:12px}
+  .plan-order li.pord{list-style:none;display:flex;align-items:center;gap:8px;padding:5px 6px;
+    border:1px solid transparent;border-radius:7px;margin-left:-20px}
+  .plan-order li.pord:hover{border-color:var(--line);background:var(--panel2)}
+  .plan-order li.pord.dragging{opacity:.45}
+  .plan-order li.pord.drop-target{border-color:var(--gator-orange);background:var(--orange-tint)}
+  .pord-num{color:var(--muted);font-size:11px;min-width:16px;text-align:right}
+  .plan-compare{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;
+    background:var(--panel2);font-size:13px;line-height:1.75}
+  .cmp-worse{color:var(--expense);font-weight:700}
+  .cmp-better{color:var(--income);font-weight:700}
+  .plan-hint{color:var(--muted);font-size:12px;margin-top:6px}
   .plan-warn{color:var(--bad);font-weight:600}
   .debts-lower{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:20px}
   .debts-lower .plan-panel{flex:1;min-width:280px;margin-top:0}
@@ -455,7 +466,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, goals:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, customOrder:[], goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 let sessionDead=false;   // refresh token definitively rejected -> ask for a sign-in
@@ -653,7 +664,7 @@ function itemsForMonth(y,m){
 // memoized payoff plan (recomputed only when debts/allowance change) so the budget can read it cheaply
 let _planCache=null,_planSig='__none__';
 function getPlan(){
-  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance,p:state.paidDebts});
+  const sig=JSON.stringify({d:state.debts,a:state.debtAllowance,p:state.paidDebts,c:state.customOrder});
   if(sig!==_planSig){_planSig=sig;_planCache=buildPlan();}
   return _planCache;
 }
@@ -1119,6 +1130,40 @@ function setupDebtDnD(){
   rows.addEventListener('dragend',()=>{rows.querySelectorAll('tr.drop-target,tr.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));debtDrag=null;});
   setupTouchDnD(rows,'tr[data-id]', tr=>tr.dataset.id, (id,tr)=>reorderDebts(id,tr.dataset.id));
 }
+// ---- drag to reorder the payoff plan (which debt gets the extra first) ----
+function reorderPlan(draggedId,targetId){
+  if(draggedId===targetId)return;
+  const order=[...document.querySelectorAll('#planPanel li.pord')].map(li=>li.dataset.id);
+  const from=order.indexOf(draggedId); if(from<0)return;
+  order.splice(from,1);
+  const to=order.indexOf(targetId); if(to<0)return;
+  order.splice(to,0,draggedId);
+  state.customOrder=order;
+  save(); renderDebts();
+}
+function setupPlanDnD(){
+  const el=$('#planPanel'); let drag=null;
+  const clear=()=>el.querySelectorAll('li.drop-target,li.dragging').forEach(x=>x.classList.remove('drop-target','dragging'));
+  el.addEventListener('dragstart',e=>{
+    const h=e.target.closest('.draghandle'); if(!h)return;
+    const li=h.closest('li.pord'); if(!li)return;
+    drag=li.dataset.id; e.dataTransfer.effectAllowed='move';
+    try{e.dataTransfer.setData('text/plain',drag);}catch(_){}
+    li.classList.add('dragging');
+  });
+  el.addEventListener('dragover',e=>{
+    if(!drag)return; const li=e.target.closest('li.pord'); if(!li)return;
+    e.preventDefault(); e.dataTransfer.dropEffect='move';
+    if(!li.classList.contains('drop-target')){el.querySelectorAll('li.drop-target').forEach(x=>x.classList.remove('drop-target')); li.classList.add('drop-target');}
+  });
+  el.addEventListener('drop',e=>{
+    e.preventDefault(); const li=e.target.closest('li.pord'); clear();
+    if(drag&&li) reorderPlan(drag,li.dataset.id);
+    drag=null;
+  });
+  el.addEventListener('dragend',()=>{clear();drag=null;});
+  setupTouchDnD(el,'li.pord', li=>li.dataset.id, (id,li)=>reorderPlan(id,li.dataset.id));
+}
 // allowance input: bind once; live-update without clobbering what you're typing
 function setupAllowance(){
   const el=$('#debtAllowance'); let t;
@@ -1232,6 +1277,16 @@ const STRATEGIES=[
     allocExtra:(debts,date,pool)=>{ const m={}; let p=pool;
       debts.slice().sort((a,b)=>fullRate(b)-fullRate(a)||a.bal-b.bal).forEach(d=>{const e=Math.min(p,d.bal); if(e>0){m[d.id]=e; p-=e;}}); return m; } },
 ];
+// The user's own payoff order (dragged in the plan panel): all EXTRA goes to the first debt in
+// their list, then the next. Minimums and deferred-interest deadlines are still paid first,
+// so a custom order can never miss a contractual payment or blow a 0%-deferred deadline.
+const CUSTOM_STRATEGY={ id:'custom', label:'your custom order',
+  allocExtra:(debts,date,pool)=>{ const m={}; let p=pool;
+    const ord=state.customOrder||[];
+    const rank=d=>{const i=ord.indexOf(d.id); return i<0?9999:i;};
+    debts.slice().sort((a,b)=>rank(a)-rank(b)||a.bal-b.bal)
+      .forEach(d=>{const e=Math.min(p,d.bal); if(e>0){m[d.id]=e; p-=e;}});
+    return m; } };
 
 // Run all feasible strategies, pick least-interest; compare against plain avalanche for savings.
 function buildPlan(){
@@ -1265,6 +1320,20 @@ function buildPlan(){
   }
   Object.assign(best,{allowance,hasDebt:true,noAllowance:false,belowMin:false,feasible:true,totalMin:base.totalMin});
   best.savedVsNaive = (naive&&naive.feasible)? Math.max(0,naive.totalInterest-best.totalInterest) : 0;
+  // If the user dragged their own payoff order, that becomes the ACTIVE plan and the
+  // recommended figures ride along so the panel can show what the choice costs.
+  const ord=(state.customOrder||[]).filter(id=>liveDebts.some(d=>d.id===id));
+  if(ord.length>1){
+    const c=simulatePlan(CUSTOM_STRATEGY);
+    if(c.feasible){
+      Object.assign(c,{allowance,hasDebt:true,noAllowance:false,belowMin:false,feasible:true,
+        totalMin:base.totalMin,strategyId:'custom',strategyLabel:'your custom order',
+        isCustom:true,savedVsNaive:0,
+        recommended:{totalInterest:best.totalInterest,months:best.months,label:best.strategyLabel,
+          mk:((best.schedule&&best.schedule[best.months-1])||{}).mk}});
+      return c;
+    }
+  }
   return best;
 }
 
@@ -1493,7 +1562,9 @@ function renderDebts(){
   // delete + click-to-edit money/percent cells (delegated)
   $('#debtRows').onclick=e=>{
     const del=e.target.closest('[data-del]');
-    if(del){state.debts=state.debts.filter(x=>x.id!==del.dataset.del);save();renderDebts();return;}
+    if(del){state.debts=state.debts.filter(x=>x.id!==del.dataset.del);
+      state.customOrder=(state.customOrder||[]).filter(id=>id!==del.dataset.del);
+      save();renderDebts();return;}
     const cell=e.target.closest('.editcell'); if(!cell||cell.querySelector('input'))return;
     const id=cell.dataset.id,f=cell.dataset.f,val=cell.dataset.val;
     cell.innerHTML=`<input class="debtinput moneyinput" type="number" step="0.01" value="${val}">`;
@@ -1529,7 +1600,11 @@ function renderDebts(){
     }
     const showPlan = plan.feasible && !plan.belowMin;
     let summary='';
-    if(showPlan){
+    const isCustom=!!plan.isCustom;
+    if(showPlan && isCustom){
+      summary=`You've set <b>your own payoff order</b> — extra money goes to the top debt first. `
+        +`Minimum payments (and any deferred-interest deadline) are still covered every month.`;
+    } else if(showPlan){
       summary=`Strategy: <b>${esc(plan.strategyLabel||'avalanche')}</b> — chosen to accrue the least interest. `
         +`With <b>${fmt(plan.allowance)}/mo</b> you'll be debt-free in ${(()=>{const mk=payoffMk(plan,plan.months);
             return mk?`<b>${mkLong(mk)}</b> — ${plan.months} months (~${(plan.months/12).toFixed(1)} yrs)`
@@ -1544,9 +1619,51 @@ function renderDebts(){
         ? `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b> — <b>deferred interest</b>: must be $0 by then or interest is back-charged to the start. The plan pays it off in time.</li>`
         : `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge that interest.</li>`).join('');
     if(showPlan && promos) promoNote=`<div class="plan-summary" style="margin-top:6px">⏳ Promo deadlines:</div><ul class="plan-order">${promos}</ul>`;
-    const list = plan.order.map(o=>{const mk=payoffMk(plan,o.month);
-      return `<li><b>${esc(o.name)}</b> <span class="pord-when">— paid off ${mk?mkLong(mk)+' ':''}(${o.month} mo${o.month===1?'':'s'})</span></li>`;}).join('');
-    $('#planPanel').innerHTML=`<div class="plan-title">📋 Recommended payoff plan — least-interest</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}${promoNote}`;
+    // When the user has dragged an order, keep THEIR sequence on screen (annotated with the
+    // resulting dates) so the drag sticks; otherwise show the natural payoff sequence.
+    let items;
+    if(isCustom){
+      const byId={}; plan.order.forEach(o=>byId[o.id]=o);
+      const liveIds=state.debts.filter(d=>(Number(d.current)||0)>0.005).map(d=>d.id);
+      items=(state.customOrder||[]).filter(id=>liveIds.indexOf(id)>=0).map(id=>{
+        const d=state.debts.find(x=>x.id===id)||{};
+        return {id,name:d.name||'Debt',month:(byId[id]||{}).month||plan.payoff[id]};});
+      plan.order.forEach(o=>{ if(!items.some(i=>i.id===o.id)) items.push({id:o.id,name:o.name,month:o.month}); });
+    } else {
+      items=plan.order.map(o=>({id:o.id,name:o.name,month:o.month}));
+    }
+    const list = items.map((o,i)=>{const mk=o.month?payoffMk(plan,o.month):null;
+      return `<li class="pord" data-id="${o.id}">`
+        +`<span class="draghandle" draggable="true" title="Drag to change which debt gets your extra payment first">⠿</span>`
+        +`<span class="pord-num">${i+1}.</span><b>${esc(o.name)}</b> `
+        +`<span class="pord-when">— paid off ${mk?mkLong(mk)+' ':''}${o.month?`(${o.month} mo${o.month===1?'':'s'})`:''}</span></li>`;}).join('');
+    // what the chosen order costs vs the least-interest one
+    let compare='';
+    if(showPlan && isCustom && plan.recommended){
+      const r=plan.recommended, dInt=plan.totalInterest-r.totalInterest, dMon=plan.months-r.months;
+      const cls=dInt>0.5?'cmp-worse':'cmp-better';
+      let verdict;
+      if(Math.abs(dInt)<=0.5 && dMon===0) verdict='Same total cost as the recommended order.';
+      else {
+        verdict=(dInt>0.5?`Costs <span class="cmp-worse">${fmt(dInt)}</span> more interest`
+                : dInt<-0.5?`Saves <span class="cmp-better">${fmt(-dInt)}</span> in interest`
+                : 'Same interest')
+          +(dMon!==0?` and finishes <span class="${dMon>0?'cmp-worse':'cmp-better'}">${Math.abs(dMon)} month${Math.abs(dMon)===1?'':'s'}</span> ${dMon>0?'later':'earlier'}`:'')
+          +' than the recommended order.';
+      }
+      const myMk=payoffMk(plan,plan.months);
+      compare=`<div class="plan-compare">`
+        +`<div><b>Your order:</b> debt-free <b>${myMk?mkLong(myMk):plan.months+' mos'}</b> · interest <b>${fmt(plan.totalInterest)}</b></div>`
+        +`<div><b>Recommended</b> (${esc(r.label||'least-interest')}): debt-free <b>${r.mk?mkLong(r.mk):r.months+' mos'}</b> · interest <b>${fmt(r.totalInterest)}</b></div>`
+        +`<div>${verdict}</div>`
+        +`<button class="btn ghost" id="resetOrder" style="margin-top:8px;padding:5px 10px;font-size:12px">↺ Use recommended order</button></div>`;
+    }
+    const dragHint = showPlan && !isCustom
+      ? '<div class="plan-hint">Drag <b>⠿</b> to try your own payoff order and see what it costs.</div>' : '';
+    const title = isCustom ? '📋 Payoff plan — your custom order' : '📋 Recommended payoff plan — least-interest';
+    $('#planPanel').innerHTML=`<div class="plan-title">${title}</div>${warn}<div class="plan-summary">${summary}</div>${showPlan?'<ol class="plan-order">'+list+'</ol>':''}${dragHint}${compare}${promoNote}`;
+    const rb=$('#resetOrder');
+    if(rb) rb.onclick=()=>{ state.customOrder=[]; save(); renderDebts(); toast('Back to the recommended order'); };
   }
   renderSchedule(plan);
   // thermometer (progress toward paying off ALL debts)
@@ -1674,9 +1791,9 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},moves:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},goals:[]}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},moves:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},customOrder:[],goals:[]}; seedState(); saveLocal(); }
   render();
-  if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupAllowance(); }
+  if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupPlanDnD(); setupAllowance(); }
   startSync();
   setTimeout(scrollToToday,250);
   window.addEventListener('load',()=>setTimeout(scrollToToday,120),{once:true});
