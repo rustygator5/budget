@@ -173,6 +173,9 @@
   #debtTbl input.promo:hover{border-color:var(--line)}
   #debtTbl td.promo-soon input.promo{border-color:var(--warn);color:var(--warn)}
   #debtTbl td.promo-past input.promo{border-color:var(--bad);color:var(--bad)}
+  .promo-rate{display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:3px}
+  .promo-rate input{width:52px!important;font-size:12px!important;padding:3px 5px!important;text-align:right}
+  .promo-rate span{font-size:10px;color:var(--muted);white-space:nowrap}
   #debtTbl label.defchk{display:flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap}
   #debtTbl label.defchk input{margin:0}
   #debtTbl select.prio{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
@@ -392,7 +395,7 @@
         <tbody id="debtRows"></tbody>
       </table>
       <button class="btn" id="addDebt" style="margin-top:12px">＋ Add debt</button>
-      <div class="hint">Set each debt's <b>Type</b>, <b>Minimum Payment</b>, <b>APR</b>, and any <b>0% Promo End</b> date, plus your total <b>Monthly debt allowance</b>. All types accrue ~APR/12 monthly on the balance, but <b>credit cards</b> revolve with %-of-balance minimums and promo rates, while <b>auto loans &amp; mortgages</b> are fixed installments. The planner tests several strategies — including <b>clearing 0% promos before they expire</b> — and picks the one with the <b>least total interest</b>. <b>Pay This Month</b> is what to pay each debt now; <b>Payoff</b> is when it clears. Sort by any header; drag ⠿ to reorder.</div>
+      <div class="hint">Set each debt's <b>Type</b>, <b>Minimum Payment</b>, <b>APR</b>, and any <b>promo</b> (end date plus the rate during it — 0% or a low rate), plus your total <b>Monthly debt allowance</b>. All types accrue ~APR/12 monthly on the balance, but <b>credit cards</b> revolve with %-of-balance minimums and promo rates, while <b>auto loans &amp; mortgages</b> are fixed installments. The planner tests several strategies — including <b>clearing promo balances before they expire</b> — and picks the one with the <b>least total interest</b>. <b>Pay This Month</b> is what to pay each debt now; <b>Payoff</b> is when it clears. Sort by any header; drag ⠿ to reorder.</div>
     </div>
     <div class="debts-lower">
       <div class="thermo-wrap">
@@ -413,6 +416,7 @@
     <div class="plan-panel">
       <div class="plan-title">🔄 Balance transfer offers</div>
       <div class="plan-summary">Add a card you could move a balance onto — a new 0% offer, or one you already have.
+        The promo can be <b>0% or any low rate</b> — set <b>Promo APR</b> to what you'd actually be charged during it.
         The planner works out <b>how much actually fits</b> (the fee counts against the limit), what the fee costs,
         and whether the move genuinely saves money once the fee is paid.</div>
       <div class="debts-main">
@@ -425,7 +429,8 @@
             <th>Fee %</th>
             <th>Fee min</th>
             <th>Max transfer</th>
-            <th>0% until</th>
+            <th>Promo until</th>
+            <th>Promo APR</th>
             <th>APR after</th>
             <th></th>
           </tr></thead>
@@ -1247,8 +1252,11 @@ let debtSort={col:'',dir:1};
 // --- interest mechanics ---
 // All three accrue simple monthly interest = balance × APR/12; payments hit principal.
 // Credit cards revolve (compound any unpaid interest) with %-of-balance minimums + promo APRs;
-// auto loans & mortgages are fixed amortizing installments. Promo = 0% until promoEnd, then APR.
-function monthlyRate(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date<pe) return 0;} return (Number(d.apr)||0)/100/12; }
+// auto loans & mortgages are fixed amortizing installments.
+// A promo runs at promoApr (0 unless set - plenty of offers are a low rate rather than 0%)
+// until promoEnd, then the balance reverts to the full APR.
+function promoRate(d){ return (Number(d.promoApr)||0)/100/12; }
+function monthlyRate(d,date){ if(d.promoEnd){const pe=parseLocal(d.promoEnd); if(date<pe) return promoRate(d);} return (Number(d.apr)||0)/100/12; }
 function fullRate(d){ return (Number(d.apr)||0)/100/12; }              // rate once promo ends
 function inPromo(d,date){ return d.promoEnd && date<parseLocal(d.promoEnd); }
 function promoMonthsLeft(d,fromDate){ if(!d.promoEnd)return 0; const pe=parseLocal(d.promoEnd);
@@ -1265,7 +1273,7 @@ function requiredMin(d,bal,date){
 function simulatePlan(strat){
   const allowance=Number(state.debtAllowance)||0;
   const work=state.debts.filter(d=>(Number(d.current)||0)>0.005)
-    .map(d=>({id:d.id,name:d.name,bal:Number(d.current)||0,min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd,type:d.type,deferred:!!d.deferred}));
+    .map(d=>({id:d.id,name:d.name,bal:Number(d.current)||0,min:Math.max(0,Number(d.min)||0),apr:Number(d.apr)||0,promoEnd:d.promoEnd,promoApr:Number(d.promoApr)||0,type:d.type,deferred:!!d.deferred}));
   const res={payNow:{},payoff:{},order:[],totalInterest:0,months:0,feasible:true,schedule:[],intByDebt:{}};
   if(!work.length){res.empty=true;return res;}
   const live=()=>work.filter(d=>d.bal>0.005);
@@ -1320,10 +1328,10 @@ function simulatePlan(strat){
 const STRATEGIES=[
   // pure avalanche: leave extra to the fallback (highest current rate first)
   { id:'avalanche', label:'highest-rate first (avalanche)', allocExtra:()=>({}) },
-  // clear each 0% promo on a just-in-time schedule so none of it ever sees the high APR
-  { id:'promo-deadline', label:'clear 0% promos before they expire',
+  // clear each promo balance just-in-time so none of it ever reverts to the higher APR
+  { id:'promo-deadline', label:'clear promo balances before they expire',
     allocExtra:(debts,date,pool,minPaid)=>{ const m={}; let p=pool;
-      debts.filter(d=>inPromo(d,date)&&(Number(d.apr)||0)>0)
+      debts.filter(d=>inPromo(d,date)&&fullRate(d)>monthlyRate(d,date)+1e-12)
         .sort((a,b)=> parseLocal(a.promoEnd)-parseLocal(b.promoEnd) || fullRate(b)-fullRate(a))
         .forEach(d=>{ const pm=promoMonthsLeft(d,date)||1; const preMin=d.bal+(minPaid[d.id]||0);
           const need=Math.max(0, preMin/pm-(minPaid[d.id]||0)); const e=Math.min(need,p,d.bal);
@@ -1579,7 +1587,8 @@ function renderDebts(){
     const pcell=(d,f)=>`<td class="editcell" data-id="${d.id}" data-f="${f}" data-kind="pct" data-val="${Number(d[f])||0}">${(Number(d[f])||0).toFixed(2)}%</td>`;
     const promoCell=d=>{let cls='';if(d.promoEnd){const days=(parseLocal(d.promoEnd)-new Date())/864e5;cls=days<0?'promo-past':(days<60?'promo-soon':'');}
       const defBox=d.promoEnd?`<label class="defchk" title="Deferred interest (common on store cards like Lowe's): if ANY balance is left at the promo end, interest is charged back to the start. The planner will clear it in time."><input type="checkbox" class="deferred" data-id="${d.id}"${d.deferred?' checked':''}> deferred</label>`:'';
-      return `<td class="${cls}"><input class="promo debtinput" type="date" min="2000-01-01" max="2099-12-31" data-id="${d.id}" value="${d.promoEnd||''}">${defBox}</td>`;};
+      const rateBox=d.promoEnd?`<div class="promo-rate"><input class="promoapr debtinput" type="number" step="0.01" min="0" data-id="${d.id}" value="${(d.promoApr===''||d.promoApr==null)?'':d.promoApr}" placeholder="0" title="Rate charged DURING the promo - leave at 0 for a 0% offer, or enter e.g. 4.99 for a low-rate offer"><span>% during promo</span></div>`:'';
+      return `<td class="${cls}"><input class="promo debtinput" type="date" min="2000-01-01" max="2099-12-31" data-id="${d.id}" value="${d.promoEnd||''}">${rateBox}${defBox}</td>`;};
     const prioCell=d=>{const p=d.priority||'medium';
       return `<td><select class="prio debtinput prio-${p}" data-id="${d.id}">
         <option value="high"${p==='high'?' selected':''}>High</option>
@@ -1616,6 +1625,9 @@ function renderDebts(){
   });
   document.querySelectorAll('#debtRows input.promo').forEach(inp=>{
     inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoEnd=fixIsoYear(inp.value||'');save();renderDebts();}};
+  });
+  document.querySelectorAll('#debtRows input.promoapr').forEach(inp=>{
+    inp.onchange=()=>{const d=state.debts.find(x=>x.id===inp.dataset.id);if(d){d.promoApr=inp.value===''?'':Number(inp.value);save();renderDebts();}};
   });
   document.querySelectorAll('#debtRows input.deferred').forEach(cb=>{
     cb.onchange=()=>{const d=state.debts.find(x=>x.id===cb.dataset.id);if(d){d.deferred=cb.checked;save();renderDebts();}};
@@ -1681,10 +1693,12 @@ function renderDebts(){
     // promo-deadline callouts (future interest you can dodge)
     let promoNote='';
     const now=new Date();
-    const promos=state.debts.filter(d=>(Number(d.current)||0)>0.005 && d.promoEnd && parseLocal(d.promoEnd)>now && ((Number(d.apr)||0)>0||d.deferred))
+    const rateWord=d=>{const r=Number(d.promoApr)||0; return r>0?r.toFixed(2)+'%':'0%';};
+    const promos=state.debts.filter(d=>(Number(d.current)||0)>0.005 && d.promoEnd && parseLocal(d.promoEnd)>now
+        && (((Number(d.apr)||0)>(Number(d.promoApr)||0))||d.deferred))
       .map(d=>d.deferred
-        ? `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b> — <b>deferred interest</b>: must be $0 by then or interest is back-charged to the start. The plan pays it off in time.</li>`
-        : `<li><b>${esc(d.name||'Debt')}</b>: 0% until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge that interest.</li>`).join('');
+        ? `<li><b>${esc(d.name||'Debt')}</b>: ${rateWord(d)} until <b>${d.promoEnd}</b> — <b>deferred interest</b>: must be $0 by then or interest is back-charged to the start. The plan pays it off in time.</li>`
+        : `<li><b>${esc(d.name||'Debt')}</b>: ${rateWord(d)} until <b>${d.promoEnd}</b>, then <b>${(Number(d.apr)||0).toFixed(2)}%</b> — clear it before then to dodge the jump.</li>`).join('');
     if(showPlan && promos) promoNote=`<div class="plan-summary" style="margin-top:6px">⏳ Promo deadlines:</div><ul class="plan-order">${promos}</ul>`;
     // When the user has dragged an order, keep THEIR sequence on screen (annotated with the
     // resulting dates) so the drag sticks; otherwise show the natural payoff sequence.
@@ -1787,7 +1801,7 @@ function btSimulate(srcId,o,amount){
   if(!o.destDebtId){
     const start=(Number(o.balance)||0)+amount+fee;
     debts.push({id:'__bt_'+o.id,name:o.name||'Transfer card',type:'card',starting:start,current:start,
-      min:Number(o.min)||0,apr:Number(o.postApr)||0,promoEnd:o.promoEnd||'',deferred:false,priority:'medium'});
+      min:Number(o.min)||0,apr:Number(o.postApr)||0,promoEnd:o.promoEnd||'',promoApr:Number(o.promoApr)||0,deferred:false,priority:'medium'});
   }
   return planWithDebts(debts);
 }
@@ -1824,7 +1838,7 @@ function renderTransfers(){
   state.offers=state.offers||[];
   const offers=state.offers;
   if(!offers.length){
-    $('#btRows').innerHTML='<tr><td colspan="10" class="l empty" style="padding:14px">No offers yet - click "+ Add offer" and enter a card you could move a balance onto.</td></tr>';
+    $('#btRows').innerHTML='<tr><td colspan="11" class="l empty" style="padding:14px">No offers yet - click "+ Add offer" and enter a card you could move a balance onto.</td></tr>';
   } else {
     const destOpts=o=>'<option value="">New card</option>'+state.debts.map(d=>`<option value="${d.id}"${o.destDebtId===d.id?' selected':''}>${esc(d.name||'Debt')}</option>`).join('');
     const num=(o,f,ph)=>`<input class="btin" type="number" step="0.01" data-id="${o.id}" data-f="${f}" value="${(o[f]===''||o[f]==null)?'':o[f]}" placeholder="${ph}">`;
@@ -1837,6 +1851,7 @@ function renderTransfers(){
         <td>${num(o,'feeMin','5')}</td>
         <td>${num(o,'maxTransfer','0')}</td>
         <td><input class="btin" type="date" min="2000-01-01" max="2099-12-31" style="width:122px" data-id="${o.id}" data-f="promoEnd" value="${o.promoEnd||''}"></td>
+        <td>${num(o,'promoApr','0')}</td>
         <td>${num(o,'postApr','0.00')}</td>
         <td><button class="del" data-delo="${o.id}" title="Delete offer">&#128465;</button></td></tr>`).join('');
   }
@@ -1889,15 +1904,15 @@ function renderTransfers(){
     const needed=promoM>0?(i.amount+i.fee+btDestBalance(i.o))/promoM:0;
     const left=Math.max(0,(Number(i.src.current)||0)-i.amount);
     html+=`<div class="bt-card good">
-      <div class="bt-head">Move <b>${fmt(i.amount)}</b> from <b>${esc(i.src.name||'Debt')}</b> (${(Number(i.src.apr)||0).toFixed(2)}%) &rarr; <b>${esc(i.o.name||'Transfer card')}</b>${i.o.promoEnd?` &middot; 0% until <b>${promoMkLong(i.o.promoEnd)}</b>`:''}</div>
+      <div class="bt-head">Move <b>${fmt(i.amount)}</b> from <b>${esc(i.src.name||'Debt')}</b> (${(Number(i.src.apr)||0).toFixed(2)}%) &rarr; <b>${esc(i.o.name||'Transfer card')}</b>${i.o.promoEnd?` &middot; <b>${((Number(i.o.promoApr)||0)>0?(Number(i.o.promoApr)).toFixed(2)+'%':'0%')}</b> until <b>${promoMkLong(i.o.promoEnd)}</b>`:''}</div>
       <div class="bt-line">
         Fee <b>${fmt(i.fee)}</b> (${(Number(i.o.feePct)||0).toFixed(2)}%) &middot; interest saved <b>${fmt(i.interestSaved)}</b> &middot;
         <span class="bt-net" style="color:var(--income)">net ${fmt(i.net)}</span><br>
         Debt-free <b>${newMk?mkLong(newMk):i.plan.months+' mos'}</b> ${dM<0?`(${-dM} month${dM===-1?'':'s'} sooner)`:dM>0?`(${dM} month${dM===1?'':'s'} later)`:'(same date)'}<br>
         ${left>0.005?`Leaves <b>${fmt(left)}</b> on ${esc(i.src.name||'the old card')}, still at ${(Number(i.src.apr)||0).toFixed(2)}%.`:`Clears <b>${esc(i.src.name||'that debt')}</b> completely.`}<br>
         ${i.o.promoEnd?(clears
-          ? '<span style="color:var(--income)">Paid off before the 0% ends &#10003;</span> - no post-promo interest.'
-          : `<span class="bt-warn">Not cleared before the 0% ends</span> - the rest then accrues ${(Number(i.o.postApr)||0).toFixed(2)}%. About <b>${fmt(needed)}/mo</b> would clear it in time.`):'<span class="bt-warn">No promo end date set</span> - add one to score the 0% window properly.'}
+          ? '<span style="color:var(--income)">Paid off before the promo ends &#10003;</span> - it never reverts to the higher rate.'
+          : `<span class="bt-warn">Not cleared before the promo ends</span> - the rest then accrues ${(Number(i.o.postApr)||0).toFixed(2)}%. About <b>${fmt(needed)}/mo</b> would clear it in time.`):'<span class="bt-warn">No promo end date set</span> - add one to score the promo window properly.'}
         ${(i.max&&i.amount<i.max-0.005)?`<br><span style="color:var(--muted)">A partial move beats the full ${fmt(i.max)} that fits - the fee on the rest outweighs the interest it would save.</span>`:''}
       </div>
       <button class="btn" data-apply="${i.o.id}" data-src="${i.src.id}" data-amt="${i.amount}" style="margin-top:8px;padding:5px 10px;font-size:12px">Apply this transfer</button>
@@ -1927,7 +1942,7 @@ function renderTransfers(){
         const id=uid(), start=Math.round(((Number(o.balance)||0)+amount+fee)*100)/100;
         state.debts.push({id,name:o.name||'Transfer card',type:'card',starting:start,current:start,
           min:(o.min===''||o.min==null)?'':Number(o.min),apr:(o.postApr===''||o.postApr==null)?'':Number(o.postApr),
-          promoEnd:o.promoEnd||'',deferred:false,priority:'medium'});
+          promoEnd:o.promoEnd||'',promoApr:Number(o.promoApr)||0,deferred:false,priority:'medium'});
         o.destDebtId=id; o.balance='';
       }
       _planSig='__none__';
@@ -1946,12 +1961,13 @@ function renderBtNotes(){
     +'<li><b>New purchases are often not covered</b> by the 0% and can accrue interest immediately. Keep a transfer card for the transferred balance only.</li>'
     +'<li><b>Do not close the old card</b> once it is paid off - the unused limit helps your credit utilisation.</li>'
     +'<li>Offers are usually time-limited (often 60-120 days from opening) and a transfer can take a week or two to land, so keep paying the old card until it shows $0.</li>'
+    +'<li>A <b>low-rate-for-longer</b> offer can beat a short 0% one - set <b>Promo APR</b> to the rate during the promo and the ranking accounts for it.</li>'
     +'<li>These figures assume your current monthly debt allowance. Change it on the Debts tab and every option re-scores.</li>'
     +'</ul>';
 }
 $('#addOffer').onclick=()=>{
   state.offers=state.offers||[];
-  state.offers.push({id:uid(),name:'',destDebtId:'',limit:'',balance:'',feePct:3,feeMin:5,maxTransfer:'',promoEnd:'',postApr:''});
+  state.offers.push({id:uid(),name:'',destDebtId:'',limit:'',balance:'',feePct:3,feeMin:5,maxTransfer:'',promoEnd:'',promoApr:0,postApr:''});
   save(); renderTransfers();
 };
 
