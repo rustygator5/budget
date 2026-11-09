@@ -207,6 +207,29 @@
   .cmp-worse{color:var(--expense);font-weight:700}
   .cmp-better{color:var(--income);font-weight:700}
   .plan-hint{color:var(--muted);font-size:12px;margin-top:6px}
+  /* balance transfers */
+  #btTbl{width:100%;border-collapse:separate;border-spacing:0;background:var(--panel);
+    border-radius:12px;overflow:visible;min-width:900px}
+  #btTbl th{background:var(--panel2);color:var(--muted);font-size:10px;text-transform:uppercase;
+    letter-spacing:.3px;padding:7px;text-align:right;white-space:nowrap}
+  #btTbl th.l{text-align:left}
+  #btTbl td{padding:5px 7px;text-align:right;border-bottom:1px solid var(--line)}
+  #btTbl td.l{text-align:left}
+  #btTbl input,#btTbl select{background:var(--panel2);border:1px solid transparent;color:var(--txt);
+    padding:5px 6px;border-radius:6px;font-size:13px;width:94px;text-align:right}
+  #btTbl input.bn{text-align:left;width:100%;min-width:100px}
+  #btTbl select{text-align:left;width:130px}
+  #btTbl input:hover,#btTbl select:hover{border-color:var(--line)}
+  #btTbl input:focus,#btTbl select:focus{outline:none;border-color:var(--accent)}
+  .bt-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px;background:var(--panel2)}
+  .bt-card.good{border-color:var(--income)}
+  .bt-card.bad{opacity:.75}
+  .bt-head{font-weight:700;margin-bottom:6px}
+  .bt-line{font-size:13px;color:var(--muted);line-height:1.85}
+  .bt-line b{color:var(--txt)}
+  .bt-net{font-weight:800}
+  .bt-warn{color:var(--warn)}
+  .bt-notes{font-size:12px;color:var(--muted);line-height:1.9;margin:0;padding-left:18px}
   .plan-warn{color:var(--bad);font-weight:600}
   .debts-lower{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:20px}
   .debts-lower .plan-panel{flex:1;min-width:280px;margin-top:0}
@@ -308,6 +331,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="budget">📅 Budget</button>
     <button class="tab" data-tab="debts">💳 Debts</button>
+    <button class="tab" data-tab="transfers">🔄 Transfers</button>
     <button class="tab" data-tab="overview">📊 Overview</button>
   </div>
   <div class="spacer"></div>
@@ -383,6 +407,37 @@
       <div id="planPanel" class="plan-panel"></div>
     </div>
     <div id="schedulePanel" class="plan-panel"></div>
+  </div>
+
+  <div id="transfersView" style="display:none">
+    <div class="plan-panel">
+      <div class="plan-title">🔄 Balance transfer offers</div>
+      <div class="plan-summary">Add a card you could move a balance onto — a new 0% offer, or one you already have.
+        The planner works out <b>how much actually fits</b> (the fee counts against the limit), what the fee costs,
+        and whether the move genuinely saves money once the fee is paid.</div>
+      <div class="debts-main">
+        <table id="btTbl">
+          <thead><tr>
+            <th class="l">Offer / card</th>
+            <th>Lands on</th>
+            <th>Credit limit</th>
+            <th>Balance on it</th>
+            <th>Fee %</th>
+            <th>Fee min</th>
+            <th>Max transfer</th>
+            <th>0% until</th>
+            <th>APR after</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="btRows"></tbody>
+        </table>
+      </div>
+      <button class="btn" id="addOffer" style="margin-top:12px">＋ Add offer</button>
+      <div class="plan-hint">“Lands on” = a brand-new card, or an existing debt you'd move the balance onto.
+        Leave <b>Max transfer</b> at 0 if the issuer sets no cap beyond your credit limit.</div>
+    </div>
+    <div class="plan-panel" style="margin-top:16px" id="btResults"></div>
+    <div class="plan-panel" style="margin-top:16px" id="btNotes"></div>
   </div>
 
   <div id="overviewView" style="display:none">
@@ -466,7 +521,7 @@ const $=s=>document.querySelector(s);
 const fmt=n=>(n<0?'-':'')+'$'+Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, customOrder:[], goals:[]};
+let state={__budget:1, recurring:[], oneoff:{}, actuals:{}, startBal:{}, recon:{}, moves:{}, debts:[], debtAllowance:'', paidMonths:{}, paidDebts:{}, customOrder:[], offers:[], goals:[]};
 let cur={y:0,m:0}; // current viewed month
 let session=null, serverTs=0, pushTimer=null, pollTimer=null, lastRenderedKey=null;
 let sessionDead=false;   // refresh token definitively rejected -> ask for a sign-in
@@ -1176,8 +1231,10 @@ function setTab(t){
   $('#budgetView').style.display=t==='budget'?'':'none';
   $('#debtsView').style.display=t==='debts'?'':'none';
   $('#overviewView').style.display=t==='overview'?'':'none';
+  $('#transfersView').style.display=t==='transfers'?'':'none';
   $('#manageBtn').style.display=t==='budget'?'':'none';
   if(t==='debts') renderDebts();
+  else if(t==='transfers') renderTransfers();
   else if(t==='overview') renderOverview();
   else { render(); setTimeout(scrollToToday,60); }
 }
@@ -1697,6 +1754,207 @@ $('#addDebt').onclick=()=>{
   save(); renderDebts();
 };
 
+// ---- balance transfers ----
+// Every offer is judged by actually re-running the payoff plan with the transfer applied, so the
+// fee, the promo window, the post-promo APR, the minimums and the monthly allowance are all
+// accounted for exactly as they are on the Debts tab.
+function planWithDebts(debts){
+  const prev=state.debts;
+  try{ state.debts=debts; return buildPlan(); } finally { state.debts=prev; }
+}
+function btDestBalance(o){
+  if(o.destDebtId){ const d=state.debts.find(x=>x.id===o.destDebtId); return d?(Number(d.current)||0):0; }
+  return Number(o.balance)||0;
+}
+function btFee(o,amount){ return Math.max(Number(o.feeMin)||0, amount*((Number(o.feePct)||0)/100)); }
+// Largest balance that still fits: the FEE lands on the card too, so it eats into the limit.
+function btMaxTransfer(o,srcBal){
+  const room=Math.max(0,(Number(o.limit)||0)-btDestBalance(o));
+  const pct=(Number(o.feePct)||0)/100, fmin=Number(o.feeMin)||0;
+  let a=pct>0?room/(1+pct):room;
+  if(fmin>0 && (a+btFee(o,a))>room) a=room-fmin;
+  const cap=Number(o.maxTransfer)||0; if(cap>0) a=Math.min(a,cap);
+  a=Math.min(a,srcBal);
+  return Math.max(0,Math.floor(a*100)/100);
+}
+function btSimulate(srcId,o,amount){
+  const fee=btFee(o,amount);
+  const debts=state.debts.map(d=>{
+    if(d.id===srcId) return {...d,current:Math.max(0,(Number(d.current)||0)-amount)};
+    if(o.destDebtId&&d.id===o.destDebtId) return {...d,current:(Number(d.current)||0)+amount+fee};
+    return d;
+  });
+  if(!o.destDebtId){
+    const start=(Number(o.balance)||0)+amount+fee;
+    debts.push({id:'__bt_'+o.id,name:o.name||'Transfer card',type:'card',starting:start,current:start,
+      min:Number(o.min)||0,apr:Number(o.postApr)||0,promoEnd:o.promoEnd||'',deferred:false,priority:'medium'});
+  }
+  return planWithDebts(debts);
+}
+// Try the full amount and a few smaller ones - a big fee can make a partial move the better deal.
+function btBest(src,o,basePlan){
+  const srcBal=Number(src.current)||0;
+  const max=btMaxTransfer(o,srcBal);
+  if(max<1) return {amount:0,max:0,blocked:true};
+  const seen={}, cands=[];
+  [1,.75,.5,.25].forEach(f=>{const a=Math.round(max*f*100)/100; if(a>=1&&!seen[a]){seen[a]=1;cands.push(a);}});
+  let best=null;
+  for(const a of cands){
+    const pl=btSimulate(src.id,o,a);
+    if(!pl.feasible) continue;
+    const fee=btFee(o,a);
+    const saved=basePlan.totalInterest-pl.totalInterest;
+    const net=saved-fee;                      // the fee is real money, so net it off
+    if(!best||net>best.net+0.005) best={amount:a,fee,net,interestSaved:saved,plan:pl};
+  }
+  if(!best) return {amount:0,max,infeasible:true};
+  best.max=max; return best;
+}
+function monthsUntil(dateStr){
+  if(!dateStr) return 0;
+  const pe=parseLocal(dateStr), now=new Date();
+  return Math.max(0,(pe.getFullYear()-now.getFullYear())*12+(pe.getMonth()-now.getMonth()));
+}
+function promoMkLong(dateStr){
+  if(!dateStr) return '';
+  const d=parseLocal(dateStr);
+  return mkLong(mkey(d.getFullYear(),d.getMonth()));
+}
+function renderTransfers(){
+  state.offers=state.offers||[];
+  const offers=state.offers;
+  if(!offers.length){
+    $('#btRows').innerHTML='<tr><td colspan="10" class="l empty" style="padding:14px">No offers yet - click "+ Add offer" and enter a card you could move a balance onto.</td></tr>';
+  } else {
+    const destOpts=o=>'<option value="">New card</option>'+state.debts.map(d=>`<option value="${d.id}"${o.destDebtId===d.id?' selected':''}>${esc(d.name||'Debt')}</option>`).join('');
+    const num=(o,f,ph)=>`<input class="btin" type="number" step="0.01" data-id="${o.id}" data-f="${f}" value="${(o[f]===''||o[f]==null)?'':o[f]}" placeholder="${ph}">`;
+    $('#btRows').innerHTML=offers.map(o=>`<tr data-id="${o.id}">
+        <td class="l"><input class="bn btin" data-id="${o.id}" data-f="name" value="${esc(o.name||'')}" placeholder="Card / offer name"></td>
+        <td><select class="btin" data-id="${o.id}" data-f="destDebtId">${destOpts(o)}</select></td>
+        <td>${num(o,'limit','0.00')}</td>
+        <td>${o.destDebtId?`<span title="Taken from the linked debt">${fmt(btDestBalance(o))}</span>`:num(o,'balance','0.00')}</td>
+        <td>${num(o,'feePct','3')}</td>
+        <td>${num(o,'feeMin','5')}</td>
+        <td>${num(o,'maxTransfer','0')}</td>
+        <td><input class="btin" type="date" min="2000-01-01" max="2099-12-31" style="width:122px" data-id="${o.id}" data-f="promoEnd" value="${o.promoEnd||''}"></td>
+        <td>${num(o,'postApr','0.00')}</td>
+        <td><button class="del" data-delo="${o.id}" title="Delete offer">&#128465;</button></td></tr>`).join('');
+  }
+  document.querySelectorAll('#btRows .btin').forEach(el=>{
+    el.onchange=()=>{
+      const o=state.offers.find(x=>x.id===el.dataset.id); if(!o)return;
+      const f=el.dataset.f;
+      if(f==='name'||f==='destDebtId') o[f]=el.value;
+      else if(f==='promoEnd') o[f]=fixIsoYear(el.value||'');
+      else o[f]=el.value===''?'':Number(el.value);
+      save(); renderTransfers();
+    };
+  });
+  $('#btRows').onclick=e=>{
+    const del=e.target.closest('[data-delo]'); if(!del)return;
+    state.offers=state.offers.filter(x=>x.id!==del.dataset.delo); save(); renderTransfers();
+  };
+
+  const res=$('#btResults');
+  const basePlan=getPlan();
+  const sources=state.debts.filter(d=>(Number(d.current)||0)>0.005);
+  const title='<div class="plan-title">&#128161; What a transfer would do</div>';
+  if(!offers.length){ res.innerHTML=''; renderBtNotes(); return; }
+  if(!basePlan.hasDebt){ res.innerHTML=title+'<div class="plan-summary">Add your debts on the Debts tab first - there is nothing to transfer yet.</div>'; renderBtNotes(); return; }
+  if(!basePlan.feasible||basePlan.belowMin){
+    res.innerHTML=title+'<div class="plan-summary">Your payoff plan cannot be built yet (see the Debts tab), so there is no baseline to compare a transfer against. Fix that first and these options will fill in.</div>';
+    renderBtNotes(); return;
+  }
+  const ideas=[];
+  offers.forEach(o=>sources.forEach(src=>{
+    if(o.destDebtId===src.id) return;                      // a card can't transfer onto itself
+    if((Number(src.apr)||0)<=0) return;                    // nothing to save on a 0% balance
+    const b=btBest(src,o,basePlan);
+    if(!b||b.blocked||b.infeasible||!b.amount){ ideas.push({o,src,blocked:!!(b&&b.blocked),infeasible:!!(b&&b.infeasible),max:(b&&b.max)||0}); return; }
+    ideas.push(Object.assign({o,src},b));
+  }));
+  const good=ideas.filter(i=>!i.blocked&&!i.infeasible&&i.net>0.5).sort((a,b)=>b.net-a.net);
+  const bad=ideas.filter(i=>i.blocked||i.infeasible||!(i.net>0.5));
+  let html=title;
+  html += good.length
+    ? '<div class="plan-summary">Ranked by what you would actually keep after the fee. Each option is scored by re-running your whole payoff plan with the transfer applied.</div>'
+    : '<div class="plan-summary">None of these offers come out ahead right now - the fee costs more than the interest it would save. The notes below show why.</div>';
+  good.forEach(i=>{
+    const promoM=monthsUntil(i.o.promoEnd);
+    const destId=i.o.destDebtId||('__bt_'+i.o.id);
+    const payoffM=i.plan.payoff[destId];
+    const clears=payoffM&&promoM&&payoffM<=promoM;
+    const newMk=payoffMk(i.plan,i.plan.months);
+    const dM=i.plan.months-basePlan.months;
+    const needed=promoM>0?(i.amount+i.fee+btDestBalance(i.o))/promoM:0;
+    const left=Math.max(0,(Number(i.src.current)||0)-i.amount);
+    html+=`<div class="bt-card good">
+      <div class="bt-head">Move <b>${fmt(i.amount)}</b> from <b>${esc(i.src.name||'Debt')}</b> (${(Number(i.src.apr)||0).toFixed(2)}%) &rarr; <b>${esc(i.o.name||'Transfer card')}</b>${i.o.promoEnd?` &middot; 0% until <b>${promoMkLong(i.o.promoEnd)}</b>`:''}</div>
+      <div class="bt-line">
+        Fee <b>${fmt(i.fee)}</b> (${(Number(i.o.feePct)||0).toFixed(2)}%) &middot; interest saved <b>${fmt(i.interestSaved)}</b> &middot;
+        <span class="bt-net" style="color:var(--income)">net ${fmt(i.net)}</span><br>
+        Debt-free <b>${newMk?mkLong(newMk):i.plan.months+' mos'}</b> ${dM<0?`(${-dM} month${dM===-1?'':'s'} sooner)`:dM>0?`(${dM} month${dM===1?'':'s'} later)`:'(same date)'}<br>
+        ${left>0.005?`Leaves <b>${fmt(left)}</b> on ${esc(i.src.name||'the old card')}, still at ${(Number(i.src.apr)||0).toFixed(2)}%.`:`Clears <b>${esc(i.src.name||'that debt')}</b> completely.`}<br>
+        ${i.o.promoEnd?(clears
+          ? '<span style="color:var(--income)">Paid off before the 0% ends &#10003;</span> - no post-promo interest.'
+          : `<span class="bt-warn">Not cleared before the 0% ends</span> - the rest then accrues ${(Number(i.o.postApr)||0).toFixed(2)}%. About <b>${fmt(needed)}/mo</b> would clear it in time.`):'<span class="bt-warn">No promo end date set</span> - add one to score the 0% window properly.'}
+        ${(i.max&&i.amount<i.max-0.005)?`<br><span style="color:var(--muted)">A partial move beats the full ${fmt(i.max)} that fits - the fee on the rest outweighs the interest it would save.</span>`:''}
+      </div>
+      <button class="btn" data-apply="${i.o.id}" data-src="${i.src.id}" data-amt="${i.amount}" style="margin-top:8px;padding:5px 10px;font-size:12px">Apply this transfer</button>
+    </div>`;
+  });
+  bad.slice(0,6).forEach(i=>{
+    let why;
+    if(i.blocked) why=(Number(i.o.limit)||0)<=0?'Enter a credit limit to see how much would fit.':`Nothing fits - the limit is already used up (room for ${fmt(i.max||0)}).`;
+    else if(i.infeasible) why='Your allowance cannot support the payoff plan with this transfer applied.';
+    else why=`The ${fmt(i.fee||0)} fee costs more than the ${fmt(Math.max(0,i.interestSaved||0))} of interest it would save.`;
+    html+=`<div class="bt-card bad"><div class="bt-head">${esc(i.src.name||'Debt')} &rarr; ${esc(i.o.name||'Transfer card')}</div><div class="bt-line">${why}</div></div>`;
+  });
+  res.innerHTML=html;
+  res.querySelectorAll('[data-apply]').forEach(b=>{
+    b.onclick=()=>{
+      const o=state.offers.find(x=>x.id===b.dataset.apply);
+      const src=state.debts.find(x=>x.id===b.dataset.src);
+      const amount=Number(b.dataset.amt)||0;
+      if(!o||!src||amount<=0)return;
+      const fee=btFee(o,amount);
+      if(!confirm('Move '+fmt(amount)+' from '+(src.name||'that debt')+' onto '+(o.name||'the transfer card')+'?\n\nA '+fmt(fee)+' fee is added, so '+fmt(amount+fee)+' lands on the card. Your balances on the Debts tab update to match.')) return;
+      src.current=Math.max(0,Math.round(((Number(src.current)||0)-amount)*100)/100);
+      if(o.destDebtId){
+        const d=state.debts.find(x=>x.id===o.destDebtId);
+        if(d) d.current=Math.round(((Number(d.current)||0)+amount+fee)*100)/100;
+      } else {
+        const id=uid(), start=Math.round(((Number(o.balance)||0)+amount+fee)*100)/100;
+        state.debts.push({id,name:o.name||'Transfer card',type:'card',starting:start,current:start,
+          min:(o.min===''||o.min==null)?'':Number(o.min),apr:(o.postApr===''||o.postApr==null)?'':Number(o.postApr),
+          promoEnd:o.promoEnd||'',deferred:false,priority:'medium'});
+        o.destDebtId=id; o.balance='';
+      }
+      _planSig='__none__';
+      save(); renderTransfers();
+      toast('Transferred '+fmt(amount)+' - balances updated');
+    };
+  });
+  renderBtNotes();
+}
+function renderBtNotes(){
+  $('#btNotes').innerHTML='<div class="plan-title">&#128204; Before you apply</div>'
+    +'<ul class="bt-notes">'
+    +'<li><b>Most banks will not let you transfer between their own cards</b> - a Chase balance usually cannot move to another Chase card.</li>'
+    +'<li><b>The fee lands on the new card</b>, so it uses part of the limit. That is why the amounts above are capped below your full credit line.</li>'
+    +'<li><b>Most transfer promos are true 0%</b>, not deferred interest - but if this one back-charges interest when the promo ends, tick <b>deferred</b> on that debt in the Debts tab and the planner treats clearing it in time as a hard deadline.</li>'
+    +'<li><b>New purchases are often not covered</b> by the 0% and can accrue interest immediately. Keep a transfer card for the transferred balance only.</li>'
+    +'<li><b>Do not close the old card</b> once it is paid off - the unused limit helps your credit utilisation.</li>'
+    +'<li>Offers are usually time-limited (often 60-120 days from opening) and a transfer can take a week or two to land, so keep paying the old card until it shows $0.</li>'
+    +'<li>These figures assume your current monthly debt allowance. Change it on the Debts tab and every option re-scores.</li>'
+    +'</ul>';
+}
+$('#addOffer').onclick=()=>{
+  state.offers=state.offers||[];
+  state.offers.push({id:uid(),name:'',destDebtId:'',limit:'',balance:'',feePct:3,feeMin:5,maxTransfer:'',promoEnd:'',postApr:''});
+  save(); renderTransfers();
+};
+
 // ---- overview tab ----
 function debtPayForMonth(mk){ const plan=getPlan(); if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin)return 0; const s=plan.schedule.find(r=>r.mk===mk); return s?Object.values(s.pay).reduce((a,b)=>a+b,0):0; }
 function debtRemainingForMonth(mk){ const plan=getPlan(); const cur=state.debts.reduce((a,d)=>a+(Number(d.current)||0),0); if(!plan||!plan.hasDebt||!plan.feasible||plan.belowMin)return cur; const s=plan.schedule.find(r=>r.mk===mk); return s?s.debtRemaining:cur; }
@@ -1801,7 +2059,7 @@ function enterApp(){
   const now=new Date(); cur={y:now.getFullYear(),m:now.getMonth()};
   const local=loadLocal();
   if(local){ state=local; }
-  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},moves:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},customOrder:[],goals:[]}; seedState(); saveLocal(); }
+  else { state={__budget:1,recurring:[],oneoff:{},actuals:{},startBal:{},recon:{},moves:{},debts:[],debtAllowance:'',paidMonths:{},paidDebts:{},customOrder:[],offers:[],goals:[]}; seedState(); saveLocal(); }
   render();
   if(!appStarted){ appStarted=true; setupDnD(); setupDebtDnD(); setupPlanDnD(); setupAllowance(); }
   startSync();
